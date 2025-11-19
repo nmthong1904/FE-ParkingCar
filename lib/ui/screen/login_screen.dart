@@ -15,7 +15,7 @@ class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _passwordController = TextEditingController();
   
   bool _isLoading = false;
-  String _message = '';
+
 
   @override
   void dispose() {
@@ -28,21 +28,22 @@ class _LoginScreenState extends State<LoginScreen> {
   void _handleLogin() async {
     setState(() {
       _isLoading = true;
-      _message = '';
+
     });
 
     final username = _usernameController.text;
     final password = _passwordController.text;
 
     // Gọi hàm login từ AuthService
-    final result = await _authService.login(username, password);
+    // final result = await _authService.login(username, password);
+    final LoginResult result = await _authService.login(username, password); // Code mới
 
     setState(() {
       _isLoading = false;
     });
 
     // Kiểm tra kết quả
-    if (result != null && result.length > 50) { 
+    if (result.token != null) {
       // Giả định Token dài hơn 50 ký tự -> ĐĂNG NHẬP THÀNH CÔNG
       
       // Hiển thị thông báo và chuyển hướng
@@ -56,12 +57,11 @@ class _LoginScreenState extends State<LoginScreen> {
         MaterialPageRoute(builder: (context) => const DetailScreen()), // Thay bằng màn hình Detail của bạn
       );
     } else {
-      // Đăng nhập thất bại, hiển thị lỗi
-      setState(() {
-        _message = result ?? 'Đã xảy ra lỗi không xác định.';
-      });
+      // ❌ THẤT BẠI: Lỗi mạng, mật khẩu sai, hoặc lỗi khác
+      final errorMessage = result.errorMessage ?? 'Lỗi không xác định.';
+      
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Lỗi: $_message'), backgroundColor: Colors.red)
+        SnackBar(content: Text('❌ Lỗi: $errorMessage'), backgroundColor: Colors.red)
       );
     }
   }
