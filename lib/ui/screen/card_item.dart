@@ -25,7 +25,7 @@ class CardItem extends StatelessWidget {
             Image.network(
               product.imageUrl,
               width: double.infinity,
-              fit: BoxFit.cover,
+              
             ),
             const SizedBox(height: 16),
             // Tên sản phẩm
