@@ -159,21 +159,27 @@ class _DetailScreenState extends State<DetailScreen> {
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    CircleAvatar(
-                      radius: 10,
-                      backgroundImage: NetworkImage(product.typeAvatarUrl),
-                      backgroundColor: Colors.white,
-                    ),
-                    const SizedBox(width: 5),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(product.typeAvatarUrl, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                          Text(product.generation, style: const TextStyle(fontSize: 12, color: Colors.blue)),
-                        ],
+                      Row(
+                        children: product.types.map((type) {
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 0),
+                            child: Image.asset(
+                              getTypeIconPath(type),
+                              width: 16,
+                              height: 16,
+                            ),
+                          );
+                        }).toList(),
                       ),
+                    const SizedBox(width: 8),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Text(product.typeAvatarUrl, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                        Text(product.generation, style: const TextStyle(fontSize: 12, color: Colors.blue)),
+                      ],
                     ),
+                    
                   ],
                 ),
               ],
