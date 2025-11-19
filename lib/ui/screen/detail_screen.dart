@@ -175,11 +175,9 @@ class _DetailScreenState extends State<DetailScreen> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Text(product.typeAvatarUrl, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
                         Text(product.generation, style: const TextStyle(fontSize: 12, color: Colors.blue)),
                       ],
-                    ),
-                    
+                    ), 
                   ],
                 ),
               ],
