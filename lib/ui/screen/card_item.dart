@@ -36,7 +36,7 @@ class CardItem extends StatelessWidget {
             const SizedBox(height: 8),
             // Mô tả sản phẩm
             Text(
-              product.description,
+              product.generation,
               style: const TextStyle(fontSize: 16, color: Colors.grey),
             ),
             const SizedBox(height: 16),
@@ -59,8 +59,7 @@ class CardItem extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(product.typeAvatarUrl, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                    Text(product.generation, style: const TextStyle(fontSize: 12, color: Colors.blue)),
+                    Text(product.description, style: const TextStyle(fontSize: 16, color: Colors.blue)),
                   ],
                 ),
                 

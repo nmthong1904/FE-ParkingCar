@@ -97,111 +97,94 @@ class _DetailScreenState extends State<DetailScreen> {
             ),
         ],
       ),
-      bottomNavigationBar: _buildBottomNav(),
     );
   }
 
   // 🔹 Product Card (Render từng item)
   Widget _buildProductCard(Product product) {
-  return GestureDetector(
-    onTap: () {
-      // Khi click vào item, chuyển đến màn hình chi tiết
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => CardItem(product: product),
-        ),
-      );
-    },
-    child: Container(
-      decoration: BoxDecoration(
-        color: Colors.grey[100],
-        borderRadius: BorderRadius.circular(10),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            spreadRadius: 1,
-            blurRadius: 3,
-            offset: const Offset(0, 2),
+    return GestureDetector(
+      onTap: () {
+        // Khi click vào item, chuyển đến màn hình chi tiết
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => CardItem(product: product),
           ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          // Hình ảnh sản phẩm/Pokémon
-          Expanded(
-            child: ClipRRect(
-              borderRadius: const BorderRadius.only(topLeft: Radius.circular(10), topRight: Radius.circular(10)),
-              child: Image.network(
-                product.imageUrl,
-                width: double.infinity,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.error_outline, size: 40)),
+        );
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.grey[100],
+          borderRadius: BorderRadius.circular(10),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              spreadRadius: 1,
+              blurRadius: 3,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            // Hình ảnh sản phẩm/Pokémon
+            Expanded(
+              child: ClipRRect(
+                borderRadius: const BorderRadius.only(topLeft: Radius.circular(10), topRight: Radius.circular(10)),
+                child: Image.network(
+                  product.imageUrl,
+                  width: double.infinity,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.error_outline, size: 40)),
+                ),
               ),
             ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Text(
-                  product.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                Text(
-                  product.description,
-                  style: const TextStyle(color: Colors.grey, fontSize: 12),
-                  overflow: TextOverflow.ellipsis,
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                      Row(
-                        children: product.types.map((type) {
-                          return Padding(
-                            padding: const EdgeInsets.only(right: 0),
-                            child: Image.asset(
-                              getTypeIconPath(type),
-                              width: 16,
-                              height: 16,
-                            ),
-                          );
-                        }).toList(),
-                      ),
-                    const SizedBox(width: 8),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Text(product.typeAvatarUrl, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-                        Text(product.generation, style: const TextStyle(fontSize: 12, color: Colors.blue)),
-                      ],
-                    ),
-                    
-                  ],
-                ),
-              ],
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Text(
+                    product.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    product.generation,
+                    style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                        Row(
+                          children: product.types.map((type) {
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 3),
+                              child: Image.asset(
+                                getTypeIconPath(type),
+                                width: 16,
+                                height: 16,
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(product.description, style: const TextStyle(fontSize: 12, color: Colors.blue)),
+                        ],
+                      ), 
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
-    ),
-  );
-}
-
-
-  // 🔹 Bottom Navigation Bar cố định
-  Widget _buildBottomNav() {
-    return BottomNavigationBar(
-      selectedItemColor: Colors.blue, // Thay thế bằng AppColors.primary
-      unselectedItemColor: Colors.grey,
-      items: const [
-        BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Trang chủ'),
-        BottomNavigationBarItem(icon: Icon(Icons.favorite), label: 'Yêu thích'),
-        BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Tài khoản'),
-      ],
     );
   }
 }

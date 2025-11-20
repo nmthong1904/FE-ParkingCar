@@ -66,7 +66,7 @@ Future<List<Product>> fetchPokemons({int offset = 0, int limit = 8}) async {
     // 3. TẠO MODEL PRODUCT ĐẦY ĐỦ
     return Product(
       name: name.toUpperCase(),
-      description: "Types: ${types.join(', ')}", // Cập nhật mô tả
+      description: types.join('/').toUpperCase(), // Cập nhật mô tả
       imageUrl:
           "https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/$id.png",
       typeAvatarUrl: "",
