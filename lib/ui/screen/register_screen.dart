@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:parkingcar/services-api/auth_service.dart'; // Đảm bảo import đúng đường dẫn
 import 'detail_screen.dart'; // Đảm bảo import đúng đường dẫn màn hình Detail của bạn
 
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+class RegisterScreen extends StatefulWidget {
+  const RegisterScreen({super.key});
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  State<RegisterScreen> createState() => _RegisterScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _RegisterScreenState extends State<RegisterScreen> {
   final AuthService _authService = AuthService();
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
@@ -24,7 +24,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  // === HÀM XỬ LÝ ĐĂNG NHẬP ===
+  // === HÀM XỬ LÝ ĐĂNG KÝ ===
   void _handleLogin() async {
     setState(() {
       _isLoading = true;
@@ -48,7 +48,7 @@ class _LoginScreenState extends State<LoginScreen> {
       
       // Hiển thị thông báo và chuyển hướng
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✅ Đăng nhập thành công!'), backgroundColor: Colors.green)
+        const SnackBar(content: Text('✅ Đăng ký thành công!'), backgroundColor: Colors.green)
       );
       
       // CHUYỂN HƯỚNG SANG MÀN HÌNH DETAIL
@@ -70,7 +70,7 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Đăng Nhập'),
+        title: const Text('Đăng ký'),
         backgroundColor: Colors.blueAccent,
       ),
       body: Padding(
@@ -88,7 +88,7 @@ class _LoginScreenState extends State<LoginScreen> {
             TextFormField(
               controller: _usernameController,
               decoration: const InputDecoration(
-                labelText: 'Tên đăng nhập',
+                labelText: 'Tên đăng ký',
                 border: OutlineInputBorder(),
                 prefixIcon: Icon(Icons.person),
               ),
@@ -107,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
             const SizedBox(height: 24),
 
-            // 3. Nút Đăng nhập
+            // 3. Nút Đăng ký
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -123,7 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
                       )
                     : const Text(
-                        'Đăng nhập',
+                        'Đăng ký',
                         style: TextStyle(fontSize: 18, color: Colors.white),
                       ),
               ),
