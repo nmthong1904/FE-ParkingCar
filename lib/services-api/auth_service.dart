@@ -6,6 +6,14 @@ import 'package:parkingcar/services-api/constants.dart'; // Import file constant
 
 const storage = FlutterSecureStorage();
 
+//Đăng ký
+class RegisterResult {
+  final bool isSuccess;
+  final String? errorMessage;
+
+  RegisterResult({required this.isSuccess, this.errorMessage});
+}
+
 // Định nghĩa một lớp để chứa kết quả (Token HOẶC Lỗi)
 class LoginResult {
   final String? token;
@@ -25,58 +33,94 @@ class LoginResult {
 }
 
 class AuthService {
-  
   // Hàm xử lý Đăng nhập và lưu JWT Token
   Future<LoginResult> login(String username, String password) async {
-  final url = '$authEndpoint/login';
+    final url = '$authEndpoint/login';
 
     try {
-    final response = await http.post(
-      Uri.parse(url),
-      headers: <String, String>{
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode(<String, String>{
-        'username': username,
-        'password': password,
-      }),
-    ).timeout(const Duration(seconds: 5), onTimeout: () {
-      throw TimeoutException('Yêu cầu hết thời gian chờ: Server không phản hồi.');
-    });
+      final response = await http
+          .post(
+            Uri.parse(url),
+            headers: <String, String>{'Content-Type': 'application/json'},
+            body: jsonEncode(<String, String>{
+              'username': username,
+              'password': password,
+            }),
+          )
+          .timeout(
+            const Duration(seconds: 5),
+            onTimeout: () {
+              throw TimeoutException(
+                'Yêu cầu hết thời gian chờ: Server không phản hồi.',
+              );
+            },
+          );
 
-    if (response.statusCode == 200) {
-      // ✅ THÀNH CÔNG: LƯU VÀ TRẢ VỀ TOKEN
-      final data = jsonDecode(response.body);
-      final token = data['token'];
-      
-      await storage.write(key: 'jwt_token', value: token);
-      print('✅ Đăng nhập thành công, Token đã lưu.');
-      
-      return LoginResult.success(token);
-    } else {
-      // ❌ THẤT BẠI TỪ SERVER (401, 400 - Mật khẩu/Tài khoản sai)
-      final errorData = jsonDecode(response.body);
-      final errorMessage = errorData['message'] ?? 'Lỗi đăng nhập không xác định.';
-      
-      return LoginResult.failure(errorMessage);
+      if (response.statusCode == 200) {
+        // ✅ THÀNH CÔNG: LƯU VÀ TRẢ VỀ TOKEN
+        final data = jsonDecode(response.body);
+        final token = data['token'];
+
+        await storage.write(key: 'jwt_token', value: token);
+        print('✅ Đăng nhập thành công, Token đã lưu.');
+
+        return LoginResult.success(token);
+      } else {
+        // ❌ THẤT BẠI TỪ SERVER (401, 400 - Mật khẩu/Tài khoản sai)
+        final errorData = jsonDecode(response.body);
+        final errorMessage =
+            errorData['message'] ?? 'Lỗi đăng nhập không xác định.';
+
+        return LoginResult.failure(errorMessage);
+      }
+    } on TimeoutException {
+      // ❌ LỖI MẠNG: TIMEOUT (Server Tắt/Mạng kém)
+      return LoginResult.failure(
+        'Lỗi kết nối: Server mất quá nhiều thời gian để phản hồi (Timeout).',
+      );
+    } on Exception catch (e) {
+      // ❌ LỖI MẠNG: SOCKET EXCEPTION (Server Tắt/Địa chỉ sai)
+      print('Lỗi kết nối mạng: $e');
+      return LoginResult.failure(
+        'Lỗi kết nối: Server không hoạt động hoặc địa chỉ API sai.',
+      );
     }
-  } 
-  on TimeoutException {
-    // ❌ LỖI MẠNG: TIMEOUT (Server Tắt/Mạng kém)
-    return LoginResult.failure('Lỗi kết nối: Server mất quá nhiều thời gian để phản hồi (Timeout).');
-  } 
-  on Exception catch (e) {
-    // ❌ LỖI MẠNG: SOCKET EXCEPTION (Server Tắt/Địa chỉ sai)
-    print('Lỗi kết nối mạng: $e');
-    return LoginResult.failure('Lỗi kết nối: Server không hoạt động hoặc địa chỉ API sai.');
   }
-}
+
+  // Hàm xử lý Đăng ký và lưu JWT Token
+  Future<RegisterResult> register(String username, String password) async {
+    final String baseUrl = '$authEndpoint/register';
+    try {
+      final response = await http.post(
+        Uri.parse(baseUrl), // Endpoint đăng ký
+        headers: {'Content-Type': 'application/json'},
+        body: json.encode({'username': username, 'password': password}),
+      );
+
+      if (response.statusCode == 201) {
+        // 201 Created (thành công)
+        return RegisterResult(isSuccess: true);
+      } else {
+        // Xử lý lỗi từ Backend (ví dụ: username đã tồn tại)
+        final responseBody = json.decode(response.body);
+        final error =
+            responseBody['message'] ?? 'Lỗi server (${response.statusCode})';
+        return RegisterResult(isSuccess: false, errorMessage: error);
+      }
+    } catch (e) {
+      // Lỗi kết nối mạng
+      return RegisterResult(
+        isSuccess: false,
+        errorMessage: 'Không thể kết nối đến server. Lỗi: $e',
+      );
+    }
+  }
 
   // Hàm đọc Token đã lưu (dùng để xác thực các request sau này)
   Future<String?> getToken() async {
     return await storage.read(key: 'jwt_token');
   }
-  
+
   // Hàm Đăng xuất (xóa token)
   Future<void> logout() async {
     await storage.delete(key: 'jwt_token');
