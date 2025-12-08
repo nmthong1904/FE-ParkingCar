@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:parkingcar/services-api/auth_service.dart'; // Đảm bảo import đúng đường dẫn
-import 'detail_screen.dart'; // Đảm bảo import đúng đường dẫn màn hình Detail của bạn
+import 'main_screen.dart'; // Đảm bảo import đúng đường dẫn màn hình Detail của bạn
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -54,7 +54,7 @@ class _LoginScreenState extends State<LoginScreen> {
       // CHUYỂN HƯỚNG SANG MÀN HÌNH DETAIL
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(builder: (context) => const DetailScreen()), // Thay bằng màn hình Detail của bạn
+        MaterialPageRoute(builder: (context) => const MainScreen()), // Thay bằng màn hình Detail của bạn
       );
     } else {
       // ❌ THẤT BẠI: Lỗi mạng, mật khẩu sai, hoặc lỗi khác

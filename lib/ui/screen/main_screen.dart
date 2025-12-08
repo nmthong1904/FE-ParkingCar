@@ -1,13 +1,10 @@
-// lib/screens/MainScreen.dart
-
 import 'package:flutter/material.dart';
+import 'package:parkingcar/services-api/auth_service.dart'; // Import AuthService
 import 'package:parkingcar/ui/screen/cart_screen.dart';
-// Import các màn hình con sẽ là các tab
 import 'package:parkingcar/ui/screen/detail_screen.dart';
 import 'package:parkingcar/ui/screen/home_screen.dart';
 import 'package:parkingcar/ui/screen/register_screen.dart';
-// import 'package:parkingcar/ui/screen/FavoriteScreen.dart'; // Giả định có màn hình Yêu thích
-// import 'package:parkingcar/ui/screen/ProfileScreen.dart'; // Giả định có màn hình Tài khoản
+import 'package:parkingcar/ui/screen/profile_screen.dart'; // Import màn hình Profile mới
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -17,16 +14,16 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  // 1. Quản lý Index của tab đang chọn
+  final AuthService _authService = AuthService(); // Khởi tạo AuthService
   int _selectedIndex = 0;
 
   // 2. Danh sách các màn hình con (các tab)
-  // Đặt DetailScreen (trước là List Pokemon) làm tab đầu tiên
+  // Lưu ý: Tab "Tài khoản" (index 3) sẽ được định nghĩa riêng trong build()
   final List<Widget> _screens = [
     const HomeScreen(), // Tab 1: Trang chủ
-    const DetailScreen(), // Tab 2: Yêu thích (List Pokemon)
+    const DetailScreen(), // Tab 2: Yêu thích
     const CartScreen(), // Tab 3: Giỏ hàng
-    const RegisterScreen(), // Tab 4: Tài khoản
+    // Tab 4: Được thay thế bằng _buildAccountScreen() để kiểm tra trạng thái đăng nhập
   ];
 
   // 3. Hàm xử lý khi người dùng chọn tab mới
@@ -36,11 +33,39 @@ class _MainScreenState extends State<MainScreen> {
     });
   }
 
+  // ✨ HÀM MỚI: Kiểm tra trạng thái đăng nhập và trả về màn hình phù hợp
+  Widget _buildAccountScreen() {
+    // Sử dụng FutureBuilder để đợi kết quả kiểm tra token
+    // Mỗi khi AuthState thay đổi (Đăng nhập/Đăng xuất), MainScreen sẽ được build lại.
+    return FutureBuilder<String?>(
+      future: _authService.getToken(), // Giả định AuthService có hàm getToken()
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          // Đang chờ kiểm tra token
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        final token = snapshot.data;
+        if (token != null && token.isNotEmpty) {
+          // Đã đăng nhập: Hiển thị màn hình Profile
+          // Key được thêm để ProfileScreen có thể được re-render khi đăng xuất
+          return const ProfileScreen(key: ValueKey('ProfileScreen')); 
+        } else {
+          // Chưa đăng nhập: Hiển thị màn hình Đăng ký
+          return const RegisterScreen(key: ValueKey('RegisterScreen'));
+        }
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Tạo danh sách màn hình hoàn chỉnh, bao gồm màn hình Tài khoản có điều kiện
+    final allScreens = [..._screens, _buildAccountScreen()]; 
+
     return Scaffold(
       // 4. Hiển thị màn hình con tương ứng với index đang chọn
-      body: IndexedStack(index: _selectedIndex, children: _screens),
+      body: IndexedStack(index: _selectedIndex, children: allScreens),
 
       // 5. Bottom Navigation Bar
       bottomNavigationBar: BottomNavigationBar(
