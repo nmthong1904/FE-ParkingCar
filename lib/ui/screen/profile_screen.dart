@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:parkingcar/services-api/auth_service.dart'; // Giả định AuthService có sẵn
 import 'package:device_info_plus/device_info_plus.dart';
+import 'package:parkingcar/ui/screen/login_screen.dart';
 
 
 class ProfileScreen extends StatefulWidget {
@@ -20,7 +21,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final TextEditingController _fullNameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
+
+  // ⭐️ Biến mới: Lưu tên & Platform
   String _deviceName = "Đang tải..."; // ⭐️ Biến lưu tên thiết bị
+  String _platformName = '';
   
   // Hàm giả định tải dữ liệu từ API
   // Hàm tải dữ liệu từ API
@@ -28,6 +32,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   Future<void> _loadDeviceInfo() async {
   final DeviceInfoPlugin deviceInfoPlugin = DeviceInfoPlugin();
   String name = "Không xác định";
+  String platform = ''; // Biến tạm
 
   try {
     // ⭐️ SỬ DỤNG KỸ THUẬT Platform.is... từ 'dart:io' (chỉ hoạt động trên Native Android/iOS/Desktop)
@@ -36,51 +41,77 @@ class _ProfileScreenState extends State<ProfileScreen> {
     // Nếu bạn đang chạy trên Emulator/Thiết bị Android
     if (defaultTargetPlatform == TargetPlatform.android) {
         final AndroidDeviceInfo androidInfo = await deviceInfoPlugin.androidInfo;
-        name = androidInfo.model ?? 'Android Device'; 
+        name = androidInfo.model ?? 'Android Device';
+        platform = 'Android'; 
     } 
     // Nếu bạn đang chạy trên Emulator/Thiết bị iOS
     else if (defaultTargetPlatform == TargetPlatform.iOS) {
         final IosDeviceInfo iosInfo = await deviceInfoPlugin.iosInfo;
         name = iosInfo.name ?? 'iOS Device';
+        platform = 'iOS';
     } 
     // Xử lý các trường hợp khác như Web, Linux, Windows, macOS
-    else {
-        // Ví dụ cơ bản cho các nền tảng còn lại
-        name = 'Device: ${defaultTargetPlatform.toString().split('.').last}';
-    }
+    // else {
+    //     // Ví dụ cơ bản cho các nền tảng còn lại
+    //     name = 'Device: ${defaultTargetPlatform.toString().split('.').last}';
+    //     platform = defaultTargetPlatform.toString().split('.').last;
+    // }
 
   } catch (e) {
     name = 'Lỗi tải thông tin: $e';
+    platform = 'N/A';
     print('Lỗi tải device info: $e'); // ⭐️ In ra lỗi để debug
   }
 
   setState(() {
-    _deviceName = name;
+    _deviceName = name; //⭐️ Cập nhật Device Name
+    _platformName = platform; // ⭐️ Cập nhật Platform
   });
 }
 
 Future<void> _fetchUserProfile() async {
+  // Bắt đầu Loading
   setState(() => _isLoading = true);
 
-  // ⭐️ THAY ĐỔI CHÍNH Ở ĐÂY ⭐️
-  final fetchedProfile = await _authService.fetchUserProfile();
-  // ⭐️ ********************* ⭐️
+  try {
+    // ⭐️ BƯỚC 1: Gọi hàm fetchUserProfile (Có khả năng ném Exception) ⭐️
+    // Bạn cần đảm bảo đã khởi tạo AuthService trong class này
+    final fetchedProfile = await _authService.fetchUserProfile(); 
 
-  if (fetchedProfile != null) {
-    setState(() {
+    // ⭐️ BƯỚC 2: Xử lý thành công (fetchedProfile != null) ⭐️
+    if (fetchedProfile != null) {
+      setState(() {
         _userProfile = fetchedProfile;
-        // ⭐️ BƯỚC QUAN TRỌNG: Phải gán giá trị mới cho Controller
+        // Cập nhật Controllers
         _fullNameController.text = fetchedProfile.fullName; 
         _emailController.text = fetchedProfile.email;
         _phoneController.text = fetchedProfile.phone;
       });
-    
-  } else {
-     // Xử lý trường hợp không tải được hồ sơ (ví dụ: hiển thị lỗi, đăng xuất)
-     ScaffoldMessenger.of(context).showSnackBar(
-       const SnackBar(content: Text('❌ Không thể tải thông tin người dùng.'), backgroundColor: Colors.red),);
+    } 
+    // Xử lý thất bại thông thường (ví dụ: lỗi 401 hết hạn, không phải do SSO)
+    else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('❌ Không thể tải thông tin người dùng.'), backgroundColor: Colors.red),
+      );
+    }
+  } 
+  
+  // ⭐️ BƯỚC 3: BẮT EXCEPTION KHI SESSION BỊ VÔ HIỆU HÓA (SSO 401) ⭐️
+  on SessionInvalidatedException catch (e) {
+    print("Session bị vô hiệu hóa: ${e.message}");
+    // Gọi hàm hiển thị Dialog xác nhận
+    _showSessionInvalidatedDialog(e.message);
   }
   
+  // ⭐️ BƯỚC 4: Bắt các lỗi chung khác (Mạng, Server 500) ⭐️
+  catch (e) {
+    print("Lỗi chung khi fetch profile: $e");
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('❌ Lỗi kết nối hoặc server: ${e.toString()}'), backgroundColor: Colors.red),
+    );
+  }
+  
+  // Kết thúc Loading
   setState(() {
     _isLoading = false;
   });
@@ -132,6 +163,32 @@ Future<void> _fetchUserProfile() async {
         const SnackBar(content: Text('Đã đăng xuất.'), backgroundColor: Colors.orange),
     );
   }
+
+  void _showSessionInvalidatedDialog(String message) {
+  showDialog(
+    context: context,
+    barrierDismissible: false, 
+    builder: (BuildContext context) {
+      return AlertDialog(
+        title: const Text('Phiên đăng nhập bị vô hiệu hóa'),
+        content: Text(message), 
+        actions: <Widget>[
+          TextButton(
+            child: const Text('Đăng nhập lại'),
+            onPressed: () {
+              Navigator.of(context).pop();
+              // Điều hướng về màn hình đăng nhập
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (context) => const LoginScreen()),
+                (Route<dynamic> route) => false,
+              );
+            },
+          ),
+        ],
+      );
+    },
+  );
+}
 
   @override
   void initState() {
@@ -214,7 +271,7 @@ Future<void> _fetchUserProfile() async {
                   // ⭐️ TRƯỜNG THÔNG TIN THIẾT BỊ (CHỈ ĐỌC)
                     TextFormField(
                       readOnly: true, // ⭐️ Đặt là chỉ đọc
-                      initialValue: _deviceName, // ⭐️ Hiển thị tên thiết bị
+                      initialValue:'$_platformName | $_deviceName', // ⭐️ Hiển thị tên thiết bị
                       decoration: const InputDecoration(
                         labelText: 'Thông tin Thiết bị',
                         border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))),

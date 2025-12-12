@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:parkingcar/services-api/auth_service.dart'; // Đảm bảo import đúng đường dẫn
+import 'package:parkingcar/ui/screen/register_screen.dart';
 import 'main_screen.dart'; // Đảm bảo import đúng đường dẫn màn hình Detail của bạn
 
 class LoginScreen extends StatefulWidget {
@@ -24,6 +25,57 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
+  // Tách logic chuyển hướng thành công ra hàm riêng
+  void _onLoginSuccess() {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('✅ Đăng nhập thành công!'), backgroundColor: Colors.green)
+      );
+      
+      // CHUYỂN HƯỚNG SANG MÀN HÌNH CHÍNH
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const MainScreen()),
+      );
+  }
+
+  // ⭐️ HÀM HIỂN THỊ HỘP THOẠI XÁC NHẬN (MỚI) ⭐️
+  void _showSessionConflictDialog(String username, String password) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('⚠️ Xác nhận Đăng nhập'),
+        content: const Text(
+            'Tài khoản này đang hoạt động trên thiết bị khác. Bạn có muốn đăng nhập và đăng xuất thiết bị cũ không?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(), // Hủy
+            child: const Text('Hủy'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.of(context).pop(); // Đóng hộp thoại
+                setState(() => _isLoading = true);
+                final forceResult = await _authService.login(username, password, force: true); 
+
+                setState(() => _isLoading = false);
+                
+                if (forceResult.token != null) {
+                    _onLoginSuccess();
+                } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('❌ Lỗi: ${forceResult.errorMessage ?? 'Không thể ép buộc đăng nhập.'}'), backgroundColor: Colors.red),
+                    );
+                }
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Đồng ý', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+  
   // === HÀM XỬ LÝ ĐĂNG NHẬP ===
   void _handleLogin() async {
     setState(() {
@@ -42,27 +94,24 @@ class _LoginScreenState extends State<LoginScreen> {
       _isLoading = false;
     });
 
-    // Kiểm tra kết quả
-    if (result.token != null) {
-      // Giả định Token dài hơn 50 ký tự -> ĐĂNG NHẬP THÀNH CÔNG
+   if (result.token != null && result.statusCode == 200) {
+      // 1. Đăng nhập THÀNH CÔNG (HTTP 200)
+      _onLoginSuccess();
+
+    } else if (result.statusCode == 409) {
+      // 2. ❌ XUNG ĐỘT SESSION (HTTP 409)
+      // Hiển thị hộp thoại xác nhận
+      _showSessionConflictDialog(username, password);
       
-      // Hiển thị thông báo và chuyển hướng
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✅ Đăng nhập thành công!'), backgroundColor: Colors.green)
-      );
-      
-      // CHUYỂN HƯỚNG SANG MÀN HÌNH DETAIL
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (context) => const MainScreen()), // Thay bằng màn hình Detail của bạn
-      );
     } else {
-      // ❌ THẤT BẠI: Lỗi mạng, mật khẩu sai, hoặc lỗi khác
+      // 3. ❌ THẤT BẠI KHÁC (400, 401, 500...)
       final errorMessage = result.errorMessage ?? 'Lỗi không xác định.';
       
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('❌ Lỗi: $errorMessage'), backgroundColor: Colors.red)
       );
+      print('Lỗi kết nối khi đăng ký: $result.statusCode');
+
     }
   }
 
@@ -128,6 +177,28 @@ class _LoginScreenState extends State<LoginScreen> {
                       ),
               ),
             ),
+            Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    'Chưa có tài khoản?',
+                    style: TextStyle(fontSize: 16),
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      // Chuyển sang màn hình Đăng ký và loại bỏ màn hình Đăng nhập
+                      Navigator.pushReplacement( 
+                        context,
+                        MaterialPageRoute(builder: (context) => const RegisterScreen()),
+                      );
+                    },
+                    child: const Text(
+                      'Đăng ký',
+                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.blueAccent),
+                    ),  
+                  ),
+                ],
+              ),
           ],
         ),
       ),

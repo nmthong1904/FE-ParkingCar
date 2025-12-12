@@ -20,8 +20,9 @@ class LoginResult {
   final String? token;
   final String? errorMessage;
   final String? role; // ✨ THÊM TRƯỜNG ROLE
+  final int? statusCode; // ⭐️ CẦN THÊM STATUS CODE ⭐️
 
-  LoginResult({this.token, this.errorMessage, this.role});
+  LoginResult({this.token, this.errorMessage, this.role, this.statusCode});
 
   // Factory constructor cho thành công (nhận thêm role)
   factory LoginResult.success(String token, String role) {
@@ -58,6 +59,14 @@ class UserProfile {
       phone: json['phone'] ?? '',
     );
   }
+}
+
+class SessionInvalidatedException implements Exception {
+  final String message;
+  SessionInvalidatedException(this.message);
+  
+  @override
+  String toString() => 'SessionInvalidatedException: $message';
 }
 
 class AuthService {
@@ -118,36 +127,87 @@ class AuthService {
 
    // === 2.3. Đăng nhập (Login) ===
 
-  Future<LoginResult> login(String username, String password) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/login'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({'username': username, 'password': password}),
-      );
+  Future<LoginResult> login(String username, String password, {bool force = false}) async {
+  try {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/login'),
+      headers: {'Content-Type': 'application/json'},
+      // Gửi tham số force lên Backend
+      body: json.encode({'username': username, 'password': password, 'force': force}), 
+    );
 
-      final data = json.decode(response.body);
-
-      if (response.statusCode == 200) {
-        final token = data['token'];
-        if (token != null) {
-          await _saveToken(token);
-          // Trả về kết quả thành công với token
-          return LoginResult(token: token); 
-        }
-        // Thiếu token trong response thành công
-        return LoginResult(errorMessage: 'Đăng nhập thành công nhưng thiếu token.'); 
-      } else {
-        // Đăng nhập thất bại (Ví dụ: sai mật khẩu, 401 Unauthorized)
-        final errorMessage = data['message'] ?? 'Tên đăng nhập hoặc mật khẩu không đúng.';
-        return LoginResult(errorMessage: errorMessage); 
+    // ⭐️ BƯỚC 1: XỬ LÝ 409 CONFLICT ⭐️
+    if (response.statusCode == 409) {
+      // Decode an toàn và trả về 409 để Frontend hiển thị Dialog
+      try {
+        final data = json.decode(response.body);
+        final errorMessage = data['message'] ?? 'Xung đột session.';
+        return LoginResult(errorMessage: errorMessage, statusCode: 409);
+      } catch (e) {
+        // Lỗi giải mã 409 body (Server không gửi JSON chuẩn)
+        return LoginResult(errorMessage: 'Lỗi 409: Dữ liệu phản hồi không hợp lệ.', statusCode: 409);
       }
-    } catch (e) {
-      print('Lỗi kết nối khi đăng nhập: $e');
-      // Lỗi mạng hoặc server không phản hồi
-      return LoginResult(errorMessage: 'Không thể kết nối đến máy chủ.');
     }
+
+    // ⭐️ BƯỚC 2: XỬ LÝ 200 SUCCESS hoặc 401/400 (Phải có body JSON) ⭐️
+    if (response.body.isEmpty) {
+        return LoginResult(errorMessage: 'Phản hồi trống từ máy chủ.', statusCode: response.statusCode);
+    }
+
+    final data = json.decode(response.body);
+    
+    if (response.statusCode == 200) {
+      final token = data['token'];
+      final role = data['role']; 
+      if (token != null) {
+        await _saveToken(token);
+        return LoginResult(token: token, role: role, statusCode: 200); 
+      }
+      return LoginResult(errorMessage: 'Đăng nhập thành công nhưng thiếu token.', statusCode: 200); 
+    } 
+    
+    // Xử lý các lỗi khác (401, 400, 500) sau khi đã decode
+    else {
+      final errorMessage = data['message'] ?? 'Tên đăng nhập hoặc mật khẩu không đúng.';
+      return LoginResult(errorMessage: errorMessage, statusCode: response.statusCode); 
+    }
+    
+  } catch (e) {
+    print('Lỗi kết nối hoặc giải mã khi đăng nhập: $e');
+    // Bắt lỗi mạng, lỗi giải mã JSON ban đầu, hoặc lỗi Server Crash (500)
+    return LoginResult(errorMessage: 'Không thể kết nối hoặc lỗi server.', statusCode: 503); 
   }
+}
+
+  Future<LoginResult> forceLogin(String username, String password) async {
+  try {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/login/force'), // ⚠️ Đảm bảo endpoint này đúng: /auth/login/force hay /login/force?
+      headers: {'Content-Type': 'application/json'},
+      body: json.encode({'username': username, 'password': password}),
+    );
+    
+    final data = json.decode(response.body);
+
+    if (response.statusCode == 200) {
+      final token = data['token'];
+      final role = data['role']; // Giả định backend trả về role
+      if (token != null) {
+        await _saveToken(token);
+        // Thành công ép buộc đăng nhập
+        return LoginResult(token: token, role: role, statusCode: 200); 
+      }
+      return LoginResult(errorMessage: 'Ép buộc đăng nhập thành công nhưng thiếu token.', statusCode: 200);
+    } else {
+      // Thất bại khi force login (ví dụ: sai mật khẩu trong quá trình nhập lại, hoặc lỗi server)
+      final errorMessage = data['message'] ?? 'Lỗi khi ép buộc đăng nhập.';
+      return LoginResult(errorMessage: errorMessage, statusCode: response.statusCode);
+    }
+  } catch (e) {
+    print('Lỗi kết nối khi force login: $e');
+    return LoginResult(errorMessage: 'Không thể kết nối đến máy chủ.', statusCode: 503);
+  }
+}
 
   // Hàm đọc Role đã lưu (MỚI)
   Future<String?> getUserRole() async {
@@ -184,19 +244,33 @@ class AuthService {
         final data = json.decode(response.body);
         print('DEBUG: Profile tải thành công. Data: $data');
         return UserProfile.fromJson(data); 
-      } else if (response.statusCode == 401) {
-        print('DEBUG: Lỗi 401 - Token hết hạn/không hợp lệ.');
-        await logout();
-        return null;
-      } else {
-        // Xử lý các lỗi khác (404, 500)
-        print('DEBUG: Lỗi Status Code ${response.statusCode}. Body: ${response.body}');
-        return null;
+      } 
+      // ⭐️ BẮT 401 UNAUTHORIZED ⭐️
+    else if (response.statusCode == 401) {
+      final data = json.decode(response.body);
+      final message = data['message'] ?? '';
+      
+      // So sánh với thông báo lỗi từ verifyToken của Backend
+      if (message.contains('Phiên đăng nhập đã hết hạn hoặc bị đăng nhập từ thiết bị khác')) {
+          // Xóa token cũ ngay lập tức
+          await logout(); 
+          
+          // Ném Custom Exception để UI bắt và hiển thị Dialog
+          throw SessionInvalidatedException(message); 
       }
-    } catch (e) {
-      print('DEBUG: LỖI KHI FETCH PROFILE (Mạng/JSON Parsing): $e');
-      return null;
+      
+      // Xử lý các lỗi 401 khác (ví dụ: Token hết hạn thông thường)
+      return null; 
     }
+    
+    return null; // Xử lý các lỗi khác (500, etc.)
+  } on SessionInvalidatedException catch (e) {
+      // Re-throw để hàm gọi nó có thể bắt
+      rethrow; 
+  } catch (e) {
+    print('Lỗi lấy thông tin Profile: $e');
+    return null;
+  }
     
   }
 
