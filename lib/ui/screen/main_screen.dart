@@ -3,7 +3,7 @@ import 'package:parkingcar/services-api/auth_service.dart'; // Import AuthServic
 import 'package:parkingcar/ui/screen/cart_screen.dart';
 import 'package:parkingcar/ui/screen/detail_screen.dart';
 import 'package:parkingcar/ui/screen/home_screen.dart';
-import 'package:parkingcar/ui/screen/register_screen.dart';
+import 'package:parkingcar/ui/screen/login_screen.dart';
 import 'package:parkingcar/ui/screen/profile_screen.dart'; // Import màn hình Profile mới
 
 class MainScreen extends StatefulWidget {
@@ -51,8 +51,8 @@ class _MainScreenState extends State<MainScreen> {
           // Key được thêm để ProfileScreen có thể được re-render khi đăng xuất
           return const ProfileScreen(key: ValueKey('ProfileScreen')); 
         } else {
-          // Chưa đăng nhập: Hiển thị màn hình Đăng ký
-          return const RegisterScreen(key: ValueKey('RegisterScreen'));
+          // Chưa đăng nhập: Hiển thị màn hình Đăng nhập
+          return const LoginScreen(key: ValueKey('LoginScreen'));
         }
       },
     );
