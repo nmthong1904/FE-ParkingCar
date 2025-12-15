@@ -162,6 +162,11 @@ Future<void> _fetchUserProfile() async {
     ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Đã đăng xuất.'), backgroundColor: Colors.orange),
     );
+    // Điều hướng về màn hình đăng nhập
+    Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+          (Route<dynamic> route) => false,
+    );
   }
 
   void _showSessionInvalidatedDialog(String message) {

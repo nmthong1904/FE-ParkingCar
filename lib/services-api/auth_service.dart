@@ -260,6 +260,7 @@ class AuthService {
       }
       
       // Xử lý các lỗi 401 khác (ví dụ: Token hết hạn thông thường)
+      await logout();
       return null; 
     }
     
