@@ -1,0 +1,66 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "parkingcardb-2d8b0",
+          "appId": "1:384168238964:android:efb88ac7642454c98d5621",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "parkingcardb-2d8b0",
+          "configurations": {
+            "android": "1:384168238964:android:efb88ac7642454c98d5621",
+            "ios": "1:384168238964:ios:3aea8248ce6721f68d5621",
+            "macos": "1:384168238964:ios:3aea8248ce6721f68d5621",
+            "web": "1:384168238964:web:5afae80fb8c41e8b8d5621",
+            "windows": "1:384168238964:web:f89d97cbc312cc1c8d5621"
+          }
+        }
+      }
+    }
+  },
+  "firestore": {
+    "database": "(default)",
+    "location": "nam5",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ],
+  "storage": {
+    "rules": "storage.rules"
+  },
+  "emulators": {
+    "auth": {
+      "port": 9099
+    },
+    "functions": {
+      "port": 5001
+    },
+    "firestore": {
+      "port": 8080
+    },
+    "storage": {
+      "port": 9199
+    },
+    "ui": {
+      "enabled": true
+    },
+    "singleProjectMode": true
+  }
+}
