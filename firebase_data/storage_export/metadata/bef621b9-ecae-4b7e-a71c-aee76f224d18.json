@@ -1,0 +1,19 @@
+{
+  "name": "products/1766653999144.jpg",
+  "bucket": "parkingcardb-2d8b0.firebasestorage.app",
+  "metageneration": 1,
+  "generation": 1766654005501,
+  "contentType": "application/octet-stream",
+  "storageClass": "STANDARD",
+  "contentDisposition": "inline",
+  "downloadTokens": [
+    "c3aca6f1-2fdc-42fb-9f6b-a6ec087dcf0d"
+  ],
+  "etag": "PG2ZvWc7srj69Y13kQynU32WQK8",
+  "customMetadata": {},
+  "timeCreated": "2025-12-25T09:13:25.501Z",
+  "updated": "2025-12-25T09:13:25.501Z",
+  "size": 31659,
+  "md5Hash": "N+i4puvUAdFz6OxQXUqzqA==",
+  "crc32c": "4164462765"
+}

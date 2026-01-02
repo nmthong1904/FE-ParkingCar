@@ -1,9 +1,14 @@
+import 'dart:async';
+import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:parkingcar/services-api/auth_service.dart'; // Giả định AuthService có sẵn
+import 'package:fluttertoast/fluttertoast.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:parkingcar/services-api/auth_service.dart';
 import 'package:device_info_plus/device_info_plus.dart';
-import 'package:parkingcar/ui/screen/login_screen.dart';
-
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:parkingcar/ui/screen/main_screen.dart'; // Thêm để check emailVerified
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -15,303 +20,494 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final AuthService _authService = AuthService();
   UserProfile? _userProfile;
+  StreamSubscription? _userSubscription;
+  Timer? _authTimer; // Timer để check trạng thái email liên tục (cho emulator link)
+  
   bool _isLoading = true;
   bool _isSaving = false;
+  String? _verificationId; // Lưu ID xác thực SDT
 
   final TextEditingController _fullNameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _phoneController = TextEditingController();
 
-  // ⭐️ Biến mới: Lưu tên & Platform
-  String _deviceName = "Đang tải..."; // ⭐️ Biến lưu tên thiết bị
+  final ImagePicker _picker = ImagePicker();
+
+  String _deviceName = "Đang tải...";
   String _platformName = '';
-  
-  // Hàm giả định tải dữ liệu từ API
-  // Hàm tải dữ liệu từ API
-  // ⭐️ Hàm mới: Lấy thông tin thiết bị
+  bool _isEmailVerified = false;
+  bool _isPhoneVerified = false; // Thêm biến này
+
+  @override
+  void initState() {
+    super.initState();
+    _loadDeviceInfo();
+    _startDeviceCheckListener();
+    _startAuthStatusListener(); // Theo dõi trạng thái click link xác thực
+  }
+
+  @override
+  void dispose() {
+    _userSubscription?.cancel();
+    _authTimer?.cancel();
+    super.dispose();
+  }
+
+  // Hàm che giấu thông tin
+  String _maskValue(String value) {
+    if (value.isEmpty) return "";
+    // Nếu là email, ta có thể mask phần sau chữ @ hoặc sau 5 ký tự đầu
+    if (value.length <= 5) return value;
+    String prefix = value.substring(0, 5);
+    return '$prefix' + '*' * (value.length - 5);
+  }
+
+  // Lắng nghe trạng thái link xác thực (Cực kỳ hữu ích cho Emulator)
+  void _startAuthStatusListener() {
+  FirebaseAuth.instance.userChanges().listen((user) async {
+    if (user != null && user.emailVerified) {
+      // Nếu Auth báo đã verify nhưng Firestore vẫn là false
+      // thì tiến hành cập nhật Firestore
+      await FirebaseFirestore.instance
+          .collection('users')
+          .doc(user.uid)
+          .update({'isVerified': true});
+          
+      print("✅ Đã đồng bộ trạng thái Verified vào Firestore");
+    }
+  });
+}
+
   Future<void> _loadDeviceInfo() async {
-  final DeviceInfoPlugin deviceInfoPlugin = DeviceInfoPlugin();
-  String name = "Không xác định";
-  String platform = ''; // Biến tạm
-
-  try {
-    // ⭐️ SỬ DỤNG KỸ THUẬT Platform.is... từ 'dart:io' (chỉ hoạt động trên Native Android/iOS/Desktop)
-    // Nếu bạn đang chạy Web, bạn phải dùng thư viện dart:html
-    
-    // Nếu bạn đang chạy trên Emulator/Thiết bị Android
-    if (defaultTargetPlatform == TargetPlatform.android) {
-        final AndroidDeviceInfo androidInfo = await deviceInfoPlugin.androidInfo;
-        name = androidInfo.model ?? 'Android Device';
-        platform = 'Android'; 
-    } 
-    // Nếu bạn đang chạy trên Emulator/Thiết bị iOS
-    else if (defaultTargetPlatform == TargetPlatform.iOS) {
-        final IosDeviceInfo iosInfo = await deviceInfoPlugin.iosInfo;
-        name = iosInfo.name ?? 'iOS Device';
-        platform = 'iOS';
-    } 
-    // Xử lý các trường hợp khác như Web, Linux, Windows, macOS
-    // else {
-    //     // Ví dụ cơ bản cho các nền tảng còn lại
-    //     name = 'Device: ${defaultTargetPlatform.toString().split('.').last}';
-    //     platform = defaultTargetPlatform.toString().split('.').last;
-    // }
-
-  } catch (e) {
-    name = 'Lỗi tải thông tin: $e';
-    platform = 'N/A';
-    print('Lỗi tải device info: $e'); // ⭐️ In ra lỗi để debug
+    final DeviceInfoPlugin deviceInfoPlugin = DeviceInfoPlugin();
+    String name = "Thiết bị Emulator";
+    String platform = kIsWeb ? 'Web' : defaultTargetPlatform.name;
+    try {
+      if (!kIsWeb) {
+        if (defaultTargetPlatform == TargetPlatform.android) {
+          final info = await deviceInfoPlugin.androidInfo;
+          name = info.model;
+        } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+          final info = await deviceInfoPlugin.iosInfo;
+          name = info.name;
+        }
+      }
+    } catch (_) {}
+    if (mounted) setState(() { _deviceName = name; _platformName = platform; });
   }
 
-  setState(() {
-    _deviceName = name; //⭐️ Cập nhật Device Name
-    _platformName = platform; // ⭐️ Cập nhật Platform
-  });
-}
+  Future<void> _startDeviceCheckListener() async {
+  // 1. Lấy Device ID của máy hiện tại trước
+  final String currentDeviceId = await _authService.getUniqueDeviceId();
 
-Future<void> _fetchUserProfile() async {
-  // Bắt đầu Loading
-  setState(() => _isLoading = true);
+  // 2. Bắt đầu lắng nghe Stream
+  _userSubscription = _authService.userStream().listen((snapshot) {
+    if (!snapshot.exists || snapshot.data() == null) {
+      debugPrint("Dữ liệu User không tồn tại trên Firestore!");
+      setState(() => _isLoading = false);
+      return;
+    }
 
-  try {
-    // ⭐️ BƯỚC 1: Gọi hàm fetchUserProfile (Có khả năng ném Exception) ⭐️
-    // Bạn cần đảm bảo đã khởi tạo AuthService trong class này
-    final fetchedProfile = await _authService.fetchUserProfile(); 
+    final data = snapshot.data() as Map<String, dynamic>;
+    final user = FirebaseAuth.instance.currentUser;
 
-    // ⭐️ BƯỚC 2: Xử lý thành công (fetchedProfile != null) ⭐️
-    if (fetchedProfile != null) {
+    // 3. KIỂM TRA CONFLICT DEVICE
+    // Giả sử field trên Firestore là 'deviceId'
+    String? cloudDeviceId = data['lastDeviceId'];
+    if (cloudDeviceId != null && cloudDeviceId != currentDeviceId) {
+      _showDeviceConflictDialog(); // Hiện Dialog cảnh báo
+      return; // Dừng xử lý các bước load dữ liệu phía dưới
+    }
+
+    // 4. CẬP NHẬT GIAO DIỆN
+    if (mounted) {
       setState(() {
-        _userProfile = fetchedProfile;
-        // Cập nhật Controllers
-        _fullNameController.text = fetchedProfile.fullName; 
-        _emailController.text = fetchedProfile.email;
-        _phoneController.text = fetchedProfile.phone;
+        _userProfile = UserProfile.fromFirestore(snapshot);
+        
+        // Cập nhật trạng thái xác thực
+        _isEmailVerified = data['isVerified'] ?? false || (user?.emailVerified ?? false);
+        _isPhoneVerified = data['isPhoneVerified'] ?? false;
+
+        // CHỈ cập nhật controller nếu người dùng chưa bắt đầu gõ (giữ dữ liệu cũ)
+        // Hoặc nếu đây là lần đầu tiên load dữ liệu (_isLoading vẫn đang true)
+        if (_isLoading) {
+          _fullNameController.text = _userProfile?.fullName ?? "";
+          
+          _emailController.text = _isEmailVerified 
+              ? _maskValue(_userProfile!.email) 
+              : _userProfile!.email;
+              
+          _phoneController.text = _isPhoneVerified 
+              ? _maskValue(_userProfile!.phone) 
+              : _userProfile!.phone;
+        }
+
+        _isLoading = false; // Tắt vòng xoay loading
       });
-    } 
-    // Xử lý thất bại thông thường (ví dụ: lỗi 401 hết hạn, không phải do SSO)
-    else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('❌ Không thể tải thông tin người dùng.'), backgroundColor: Colors.red),
-      );
     }
-  } 
-  
-  // ⭐️ BƯỚC 3: BẮT EXCEPTION KHI SESSION BỊ VÔ HIỆU HÓA (SSO 401) ⭐️
-  on SessionInvalidatedException catch (e) {
-    print("Session bị vô hiệu hóa: ${e.message}");
-    // Gọi hàm hiển thị Dialog xác nhận
-    _showSessionInvalidatedDialog(e.message);
-  }
-  
-  // ⭐️ BƯỚC 4: Bắt các lỗi chung khác (Mạng, Server 500) ⭐️
-  catch (e) {
-    print("Lỗi chung khi fetch profile: $e");
-    ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Lỗi kết nối hoặc server: ${e.toString()}'), backgroundColor: Colors.red),
-    );
-  }
-  
-  // Kết thúc Loading
-  setState(() {
-    _isLoading = false;
+  }, onError: (error) {
+    debugPrint("Lỗi Stream: $error");
+    setState(() => _isLoading = false);
   });
 }
 
-  // Hàm giả định lưu thông tin
-  Future<void> _handleSaveProfile() async {
-    if (_userProfile == null) return;
-
+  // ===== XỬ LÝ XÁC THỰC EMAIL (GỬI LINK) =====
+  Future<void> _handleVerifyEmail() async {
     setState(() => _isSaving = true);
-
-    final updatedProfile = UserProfile(
-      username: _userProfile!.username,
-      fullName: _fullNameController.text.trim(),
-      email: _emailController.text.trim(),
-      phone: _phoneController.text.trim(),
-    );
-    
-
-    // TRONG THỰC TẾ, GỬI updatedProfile LÊN API
-    // Ví dụ: final success = await _authService.updateUserProfile(updatedProfile);
-    // await Future.delayed(const Duration(milliseconds: 1000)); 
-    // ⭐️ GỌI API THỰC TẾ
-    // ⭐️ BỎ DÒNG GIẢ LẬP: final success = true; 
-    final success = await _authService.updateUserProfile(updatedProfile);
-
+    // Bạn cần viết hàm sendEmailVerification trong AuthService trỏ vào _auth.currentUser.sendEmailVerification()
+    bool success = await _authService.sendEmailVerification(); 
     setState(() => _isSaving = false);
-    
+
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('✅ Lưu thông tin thành công!'), backgroundColor: Colors.green),
-      );
-      // Cập nhật lại UI
-      // ⭐️ GỌI LẠI HÀM FETCH ĐỂ TẢI DỮ LIỆU MỚI TỪ SERVER
-      await _fetchUserProfile();
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-         const SnackBar(content: Text('❌ Lỗi khi lưu thông tin. Kiểm tra server.'), backgroundColor: Colors.red),
+      Fluttertoast.showToast(
+        msg: "🔗 Link xác thực đã gửi! Mở Emulator UI (4000) để click.",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+        backgroundColor: Colors.green,
+        textColor: Colors.white,
+        fontSize: 16.0,
       );
     }
   }
-  
-  // Hàm Đăng xuất
-  void _handleLogout() async {
-    await _authService.logout();
-    // Sau khi đăng xuất, cần gọi setState ở MainScreen (sẽ xử lý ở file MainScreen)
-    // Hiện tại chỉ cần thông báo và để MainScreen tự re-render.
-    ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Đã đăng xuất.'), backgroundColor: Colors.orange),
-    );
-    // Điều hướng về màn hình đăng nhập
-    Navigator.of(context).pushAndRemoveUntil(
-        MaterialPageRoute(builder: (context) => const LoginScreen()),
-          (Route<dynamic> route) => false,
-    );
-  }
 
-  void _showSessionInvalidatedDialog(String message) {
-  showDialog(
-    context: context,
-    barrierDismissible: false, 
-    builder: (BuildContext context) {
-      return AlertDialog(
-        title: const Text('Phiên đăng nhập bị vô hiệu hóa'),
-        content: Text(message), 
-        actions: <Widget>[
-          TextButton(
-            child: const Text('Đăng nhập lại'),
-            onPressed: () {
-              Navigator.of(context).pop();
-              // Điều hướng về màn hình đăng nhập
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => const LoginScreen()),
-                (Route<dynamic> route) => false,
-              );
-            },
-          ),
-        ],
+  // ===== XỬ LÝ XÁC THỰC SĐT (GỬI OTP) =====
+  Future<void> _handleVerifyPhone() async {
+  final phone = _phoneController.text.trim();
+  if (phone.isEmpty) return;
+
+  await _authService.verifyPhoneNumber(
+    phone,
+    onCodeSent: (verificationId) {
+      setState(() {
+        _verificationId = verificationId;
+      });
+      // QUAN TRỌNG: Truyền tham số isPhone: true ở đây
+      _showOtpInputDialog(phone, isPhone: true); 
+    },
+    onError: (error) { setState(() => _isSaving = false);
+        Fluttertoast.showToast(
+          msg: "❌ $error",
+          toastLength: Toast.LENGTH_SHORT,
+          gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+          backgroundColor: Colors.green,
+          textColor: Colors.white,
+          fontSize: 16.0,
       );
     },
   );
 }
 
-  @override
-  void initState() {
-    super.initState();
-    _fetchUserProfile();
-    _loadDeviceInfo();
+  // ===== DIALOG NHẬP OTP CHO SĐT =====
+  void _showOtpInputDialog(String target, {bool isPhone = false}) {
+    List<TextEditingController> controllers = List.generate(6, (index) => TextEditingController());
+    List<FocusNode> focusNodes = List.generate(6, (index) => FocusNode());
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text(isPhone ? 'Xác thực Số điện thoại' : 'Xác thực Email'),
+        content: SizedBox(
+          width: double.maxFinite, // Đảm bảo Row có không gian để giãn cách
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly, // 1. GIÃN CÁCH CÁC Ô ĐỀU NHAU
+            children: List.generate(6, (index) {
+              return SizedBox(
+                width: 40,
+                height: 50,
+                child: TextField(
+                  controller: controllers[index],
+                  focusNode: focusNodes[index],
+                  autofocus: index == 0, // Tự động focus vào ô đầu tiên
+                  keyboardType: TextInputType.number, // 2. HIỂN THỊ BÀN PHÍM SỐ
+                  textAlign: TextAlign.center,
+                  maxLength: 1,
+                  // Tăng cường hiển thị ký tự để không bị mất số
+                  style: const TextStyle(
+                    fontSize: 22, 
+                    fontWeight: FontWeight.bold, 
+                    color: Colors.black
+                  ),
+                  decoration: InputDecoration(
+                    counterText: "", 
+                    contentPadding: EdgeInsets.zero,
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Colors.grey, width: 1.5),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
+                    ),
+                  ),
+                  onChanged: (value) {
+                    // Tự động chuyển ô khi nhập hoặc xóa
+                    if (value.length == 1 && index < 5) {
+                      focusNodes[index + 1].requestFocus();
+                    } else if (value.isEmpty && index > 0) {
+                      focusNodes[index - 1].requestFocus();
+                    }
+                  },
+                ),
+              );
+            }),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('HỦY')),
+         ElevatedButton(
+            onPressed: () async {
+              String fullOtp = controllers.map((e) => e.text).join();
+              if (fullOtp.length < 6) return;
+
+              bool success = false;
+              if (isPhone) {
+                // ĐÚNG: Xác thực SĐT qua Firebase Native
+                if (_verificationId != null) {
+                  success = await _authService.confirmPhoneOtp(_verificationId!, fullOtp);
+                }
+              } else {
+                // ĐÚNG: Xác thực Email qua Cloud Function của bạn
+                success = await _authService.verifyOtp(target, fullOtp);
+              }
+
+              if (success) {
+                Navigator.pop(context);
+                 Fluttertoast.showToast(
+                    msg: "✅ Thành công!",
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+                    backgroundColor: Colors.green,
+                    textColor: Colors.white,
+                    fontSize: 16.0,
+                );
+              } else {
+                 Fluttertoast.showToast(
+                    msg: "❌ Mã không đúng",
+                    toastLength: Toast.LENGTH_SHORT,
+                    gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+                    backgroundColor: Colors.green,
+                    textColor: Colors.white,
+                    fontSize: 16.0,
+                );
+              }
+            },
+            child: const Text('XÁC NHẬN'),
+          )
+        ],
+      ),
+    );
   }
-  
-  @override
-  void dispose() {
-    _fullNameController.dispose();
-    _emailController.dispose();
-    _phoneController.dispose();
-    super.dispose();
+
+  Future<void> _handleSaveProfile() async {
+    if (_userProfile == null) return;
+    setState(() => _isSaving = true);
+
+    // LOGIC KIỂM TRA:
+    // Nếu text trong ô nhập giống với bản đã mask, nghĩa là người dùng không sửa.
+    // Khi đó ta giữ nguyên giá trị cũ từ database (_userProfile!.email)
+    
+    String finalEmail = _emailController.text == _maskValue(_userProfile!.email)
+        ? _userProfile!.email
+        : _emailController.text;
+
+    String finalPhone = _phoneController.text == _maskValue(_userProfile!.phone)
+        ? _userProfile!.phone
+        : _phoneController.text;
+
+    final updated = UserProfile(
+      avatarUrl: _userProfile!.avatarUrl,
+      uid: _userProfile!.uid,
+      username: _userProfile!.username,
+      fullName: _fullNameController.text, // Họ tên lấy trực tiếp vì không mask
+      email: finalEmail,
+      phone: finalPhone,
+    );
+    final success = await _authService.updateUserProfile(updated);
+    setState(() => _isSaving = false);
+    if (success) {
+        Fluttertoast.showToast(
+           msg: "✅ Đã cập nhật thông tin",
+           toastLength: Toast.LENGTH_SHORT,
+           gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+           backgroundColor: Colors.green,
+           textColor: Colors.white,
+           fontSize: 16.0,
+      );
+    }
   }
+
+  Future<void> _pickImage() async {
+  final XFile? image = await _picker.pickImage(source: ImageSource.gallery);
+    if (image != null) {
+      setState(() => _isSaving = true);
+      
+      String? url;
+      if (kIsWeb) {
+        Uint8List bytes = await image.readAsBytes();
+        url = await _authService.uploadAvatar(webImage: bytes);
+      } else {
+        url = await _authService.uploadAvatar(imageFile: File(image.path));
+      }
+
+      if (url != null && mounted) {
+        setState(() {
+          _userProfile = _userProfile?.copyWith(avatarUrl: url); // Sử dụng copyWith đã thêm
+          _isSaving = false;
+        });
+      }
+    }
+  }
+  void _handleLogout() async {
+    await _authService.logout();
+    Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (context) => const MainScreen()), (route) => false);
+  }
+
+  void _showDeviceConflictDialog() {
+    _userSubscription?.cancel();
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Thông báo'),
+        content: const Text('Tài khoản đã đăng nhập ở thiết bị khác.'),
+        actions: [TextButton(onPressed: _handleLogout, child: const Text('ĐỒNG Ý'))],
+      ),
+    );
+  }
+  void _showLogoutConfirmation() {
+  showDialog(
+    context: context,
+    builder: (context) => AlertDialog(
+      title: const Text('Xác nhận'),
+      content: const Text('Bạn có chắc chắn muốn đăng xuất khỏi tài khoản này không?'),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(), // Đóng Dialog nếu chọn Không
+          child: const Text('HỦY'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            Navigator.of(context).pop(); // Đóng Dialog
+            _handleLogout(); // Thực hiện đăng xuất
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+          child: const Text('ĐĂNG XUẤT', style: TextStyle(color: Colors.white)),
+        ),
+      ],
+    ),
+  );
+}
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Thông tin Tài khoản'),
-        backgroundColor: Colors.blueAccent,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.logout, color: Colors.white),
-            onPressed: _handleLogout,
-          ),
-        ],
-      ),
-      body: _isLoading
+      appBar: AppBar(title: const Text('Thông tin Tài khoản')),
+      body: _isLoading 
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
               padding: const EdgeInsets.all(24.0),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  const CircleAvatar(
-                    radius: 50,
-                    backgroundImage: AssetImage('assets/default_avatar.png'), // Thay bằng ảnh thật
-                    child: Icon(Icons.person, size: 60, color: Colors.white),
-                    backgroundColor: Colors.blueGrey,
-                  ),
-                  const SizedBox(height: 30),
-
-                  // Trường Tên đầy đủ
-                  TextFormField(
-                    controller: _fullNameController,
-                    decoration: const InputDecoration(
-                      labelText: 'Họ và Tên',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))),
-                      prefixIcon: Icon(Icons.badge),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Trường Email
-                  TextFormField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'Email',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))),
-                      prefixIcon: Icon(Icons.email),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  // Trường Số điện thoại
-                  TextFormField(
-                    controller: _phoneController,
-                    keyboardType: TextInputType.phone,
-                    decoration: const InputDecoration(
-                      labelText: 'Số điện thoại',
-                      border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))),
-                      prefixIcon: Icon(Icons.phone),
-                    ),
-                  ),
-                  const SizedBox(height: 40),
-
-                  // ⭐️ TRƯỜNG THÔNG TIN THIẾT BỊ (CHỈ ĐỌC)
-                    TextFormField(
-                      readOnly: true, // ⭐️ Đặt là chỉ đọc
-                      initialValue:'$_platformName | $_deviceName', // ⭐️ Hiển thị tên thiết bị
-                      decoration: const InputDecoration(
-                        labelText: 'Thông tin Thiết bị',
-                        border: OutlineInputBorder(borderRadius: BorderRadius.all(Radius.circular(10))),
-                        prefixIcon: Icon(Icons.devices),
-                      ),
-                    ),
-                    const SizedBox(height: 40),
-
-                  // Nút Lưu thông tin
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: _isSaving ? null : _handleSaveProfile,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        backgroundColor: Colors.blueAccent,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
+                GestureDetector(
+                    onTap: _pickImage,
+                    child: Stack(
+                      children: [
+                        CircleAvatar(
+                          radius: 50,
+                          // Sử dụng NetworkImage để tải ảnh từ URL
+                          backgroundImage: _userProfile?.avatarUrl != null ? NetworkImage(_authService.formatEmulatorUrl(_userProfile!.avatarUrl)) : null,
+                          child: _userProfile?.avatarUrl == null ? const Icon(Icons.person, size: 50) : null,
                         ),
-                      ),
-                      child: _isSaving
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                            )
-                          : const Text(
-                              'Lưu thông tin',
-                              style: TextStyle(fontSize: 18, color: Colors.white, fontWeight: FontWeight.bold),
-                            ),
+                        Positioned(
+                          bottom: 0,
+                          right: 0,
+                          child: Container(
+                            padding: const EdgeInsets.all(4),
+                            decoration: const BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+                            child: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
+                          ),
+                        ),
+                      ],
                     ),
+                  ),                  
+                  const SizedBox(height: 30),
+                  _buildField(_fullNameController, 'Họ và Tên', Icons.badge),
+                  const SizedBox(height: 20),
+                  _buildVerifiedInput(
+                    controller: _emailController, 
+                    label: 'Email', 
+                    icon: Icons.email, 
+                    isVerified: _isEmailVerified, 
+                    onVerify: _handleVerifyEmail
                   ),
-                ],
+                  const SizedBox(height: 20),
+                  _buildVerifiedInput(
+                    controller: _phoneController, 
+                    label: 'Số điện thoại', 
+                    icon: Icons.phone, 
+                    isVerified: _isPhoneVerified, 
+                    onVerify: _handleVerifyPhone
+                  ),
+                  const SizedBox(height: 20),
+                  _buildReadOnlyField('$_platformName | $_deviceName', 'Thiết bị hiện tại', Icons.devices),
+                  const SizedBox(height: 40),
+                  _buildSaveButton(),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed:_showLogoutConfirmation,
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color.fromARGB(255, 83, 83, 83), padding: const EdgeInsets.symmetric(vertical: 15)),
+                        child: const Text('Đăng xuất', style: TextStyle(color: Colors.white)),
+                      ),
+                    )
+                 ],
               ),
             ),
+    );
+  }
+
+  Widget _buildField(TextEditingController controller, String label, IconData icon) {
+    return TextFormField(
+      controller: controller,
+      decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon), border: const OutlineInputBorder()),
+    );
+  }
+
+  Widget _buildReadOnlyField(String value, String label, IconData icon) {
+    return TextFormField(
+      initialValue: value,
+      readOnly: true,
+      decoration: InputDecoration(labelText: label, prefixIcon: Icon(icon), border: const OutlineInputBorder()),
+    );
+  }
+
+ Widget _buildVerifiedInput({required TextEditingController controller, required String label, required IconData icon, required bool isVerified, required VoidCallback onVerify}) {
+    return TextFormField(
+      controller: controller,
+      readOnly: isVerified, // KHÓA CHỈNH SỬA NẾU ĐÃ XÁC THỰC
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: Icon(icon),
+        border: const OutlineInputBorder(),
+        suffixIcon: isVerified 
+          ? const Icon(Icons.verified, color: Colors.green)
+          : TextButton(onPressed: onVerify, child: const Text('XÁC THỰC')),
+        fillColor: isVerified ? Colors.grey[100] : null,
+        filled: isVerified,
+      ),
+    );
+  }
+
+  Widget _buildSaveButton() {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton(
+        onPressed: _isSaving ? null : _handleSaveProfile,
+        style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent, padding: const EdgeInsets.symmetric(vertical: 15)),
+        child: _isSaving ? const CircularProgressIndicator(color: Colors.white) : const Text('Lưu thay đổi', style: TextStyle(color: Colors.white)),
+      ),
     );
   }
 }

@@ -1,310 +1,375 @@
 import 'dart:async';
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-// Giả định file constants có định nghĩa 'authEndpoint'
-import 'package:parkingcar/services-api/constants.dart'; 
+import 'dart:io';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
-const storage = FlutterSecureStorage();
-
-// Đăng ký (Không thay đổi, chỉ cần isSuccess/errorMessage)
-class RegisterResult {
-  final bool isSuccess;
-  final String? errorMessage;
-
-  RegisterResult({required this.isSuccess, this.errorMessage});
-}
-
-// Định nghĩa một lớp để chứa kết quả Đăng nhập
-class LoginResult {
-  final String? token;
-  final String? errorMessage;
-  final String? role; // ✨ THÊM TRƯỜNG ROLE
-  final int? statusCode; // ⭐️ CẦN THÊM STATUS CODE ⭐️
-
-  LoginResult({this.token, this.errorMessage, this.role, this.statusCode});
-
-  // Factory constructor cho thành công (nhận thêm role)
-  factory LoginResult.success(String token, String role) {
-    return LoginResult(token: token, errorMessage: null, role: role);
-  }
-
-  // Factory constructor cho thất bại/lỗi
-  factory LoginResult.failure(String error) {
-    return LoginResult(token: null, errorMessage: error, role: null);
-  }
-}
-
-// Mô hình dữ liệu Người dùng cho Profile
+// ===== MODEL =====
 class UserProfile {
+  final String uid;
   final String username;
   final String fullName;
   final String email;
-  final String phone;   
+  final String phone;
+  final String? avatarUrl;
 
   UserProfile({
+    required this.uid,
     required this.username,
     required this.fullName,
     required this.email,
     required this.phone,
+    this.avatarUrl,
   });
 
-  // Factory constructor để tạo đối tượng từ JSON response
-  factory UserProfile.fromJson(Map<String, dynamic> json) {
+  // BỔ SUNG HÀM NÀY ĐỂ FIX LỖI KHI CẬP NHẬT ẢNH
+  UserProfile copyWith({
+    String? avatarUrl,
+    String? fullName,
+    String? phone,
+  }) {
     return UserProfile(
-      // Sử dụng toán tử null-aware (??) để cung cấp giá trị mặc định là chuỗi rỗng
-      username: json['username'] ?? '',
-      fullName: json['fullName'] ?? '', 
-      email: json['email'] ?? '',
-      phone: json['phone'] ?? '',
+      uid: this.uid,
+      username: this.username,
+      fullName: fullName ?? this.fullName,
+      email: this.email,
+      phone: phone ?? this.phone,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
     );
   }
-}
 
-class SessionInvalidatedException implements Exception {
-  final String message;
-  SessionInvalidatedException(this.message);
+ factory UserProfile.fromFirestore(DocumentSnapshot doc) {
+  // Thêm kiểm tra dữ liệu tồn tại
+  final data = doc.data() as Map<String, dynamic>? ?? {}; 
   
-  @override
-  String toString() => 'SessionInvalidatedException: $message';
+  return UserProfile(
+    uid: doc.id,
+    username: data['username'] ?? "",
+    fullName: data['fullName'] ?? "New User",
+    email: data['email'] ?? "",
+    phone: data['phone'] ?? "",
+    // Quan trọng: avatarUrl phải cho phép null để không lỗi khi chưa có ảnh
+    avatarUrl: data['avatarUrl'], 
+  );
+}
 }
 
+class LoginResult {
+  final String? token;
+  final String? errorMessage;
+  final int? statusCode;
+
+  LoginResult({this.token, this.errorMessage, this.statusCode});
+}
+
+late FirebaseFunctions _functions;
+
+// ===== SERVICE =====
 class AuthService {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
 
-  // Key để lưu token
-  static const _tokenKey = 'jwt_token'; 
-  final _storage = const FlutterSecureStorage();
-  // Thay thế bằng URL API của Node.js Backend
-  final String _baseUrl = "http://10.0.0.108:3000/api/auth"; 
+  AuthService() {
+  if (kDebugMode) {
+    final host = kIsWeb ? 'localhost' : '10.0.2.2';
 
-  // === 2.1. Quản lý Token ===
+    _functions = FirebaseFunctions.instanceFor(
+      region: 'us-central1',
+    );
+    _functions.useFunctionsEmulator(host, 5001);
 
-  // Lấy token từ bộ nhớ an toàn
-  Future<String?> getToken() async {
-    return await _storage.read(key: _tokenKey);
+    _auth.useAuthEmulator(host, 9099);
+    _db.useFirestoreEmulator(host, 8080);
+
+    debugPrint('🔥 Firebase Emulator connected ($host)');
+  } else {
+    _functions = FirebaseFunctions.instanceFor(
+      region: 'us-central1',
+    );
   }
+}
 
-  // Lưu token vào bộ nhớ an toàn
-  Future<void> _saveToken(String token) async {
-    await _storage.write(key: _tokenKey, value: token);
-  }
-
- // === 2.2. Đăng ký (Register) ===
-
-  Future<RegisterResult> register(String username, String password, String confirmPassword, String email, String phone) async {
+  // ===== REGISTER =====
+  Future<bool> register(
+      String username, String password, String email, String phone) async {
     try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/register'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'username': username,
-          'password': password,
-          'confirmPassword': confirmPassword,
-          'email': email,
-          'phone': phone,
-          'full_name': 'New User' // Thêm trường full_name mặc định
-        }),
+      final result = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
       );
 
-      final data = json.decode(response.body);
+      // Gửi email xác nhận ngay khi đăng ký
+      // await result.user!.sendEmailVerification();
 
-      if (response.statusCode == 201) { // 201 Created
-        // Đăng ký thành công, thường API trả về token ngay
-        final token = data['token'];
-        if (token != null) {
-          await _saveToken(token);
-        }
-        return RegisterResult(isSuccess: true);
-      } else {
-        // Đăng ký thất bại
-        return RegisterResult(isSuccess: false, errorMessage: data['message'] ?? 'Lỗi đăng ký không xác định.');
-      }
+      await _db.collection('users').doc(result.user!.uid).set({
+        'username': username.toLowerCase(),
+        'email': email,
+        'phone': phone,
+        'fullName': 'New User',
+        'createdAt': FieldValue.serverTimestamp(),
+        'isVerified': false, 
+      });
+
+      return true;
     } catch (e) {
-      print('Lỗi kết nối khi đăng ký: $e');
-      return RegisterResult(isSuccess: false, errorMessage: 'Không thể kết nối đến máy chủ.');
+      debugPrint('Register error: $e');
+      return false;
     }
   }
 
-   // === 2.3. Đăng nhập (Login) ===
-
-  Future<LoginResult> login(String username, String password, {bool force = false}) async {
-  try {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/login'),
-      headers: {'Content-Type': 'application/json'},
-      // Gửi tham số force lên Backend
-      body: json.encode({'username': username, 'password': password, 'force': force}), 
-    );
-
-    // ⭐️ BƯỚC 1: XỬ LÝ 409 CONFLICT ⭐️
-    if (response.statusCode == 409) {
-      // Decode an toàn và trả về 409 để Frontend hiển thị Dialog
-      try {
-        final data = json.decode(response.body);
-        final errorMessage = data['message'] ?? 'Xung đột session.';
-        return LoginResult(errorMessage: errorMessage, statusCode: 409);
-      } catch (e) {
-        // Lỗi giải mã 409 body (Server không gửi JSON chuẩn)
-        return LoginResult(errorMessage: 'Lỗi 409: Dữ liệu phản hồi không hợp lệ.', statusCode: 409);
-      }
-    }
-
-    // ⭐️ BƯỚC 2: XỬ LÝ 200 SUCCESS hoặc 401/400 (Phải có body JSON) ⭐️
-    if (response.body.isEmpty) {
-        return LoginResult(errorMessage: 'Phản hồi trống từ máy chủ.', statusCode: response.statusCode);
-    }
-
-    final data = json.decode(response.body);
-    
-    if (response.statusCode == 200) {
-      final token = data['token'];
-      final role = data['role']; 
-      if (token != null) {
-        await _saveToken(token);
-        return LoginResult(token: token, role: role, statusCode: 200); 
-      }
-      return LoginResult(errorMessage: 'Đăng nhập thành công nhưng thiếu token.', statusCode: 200); 
-    } 
-    
-    // Xử lý các lỗi khác (401, 400, 500) sau khi đã decode
-    else {
-      final errorMessage = data['message'] ?? 'Tên đăng nhập hoặc mật khẩu không đúng.';
-      return LoginResult(errorMessage: errorMessage, statusCode: response.statusCode); 
-    }
-    
-  } catch (e) {
-    print('Lỗi kết nối hoặc giải mã khi đăng nhập: $e');
-    // Bắt lỗi mạng, lỗi giải mã JSON ban đầu, hoặc lỗi Server Crash (500)
-    return LoginResult(errorMessage: 'Không thể kết nối hoặc lỗi server.', statusCode: 503); 
-  }
-}
-
-  Future<LoginResult> forceLogin(String username, String password) async {
-  try {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/login/force'), // ⚠️ Đảm bảo endpoint này đúng: /auth/login/force hay /login/force?
-      headers: {'Content-Type': 'application/json'},
-      body: json.encode({'username': username, 'password': password}),
-    );
-    
-    final data = json.decode(response.body);
-
-    if (response.statusCode == 200) {
-      final token = data['token'];
-      final role = data['role']; // Giả định backend trả về role
-      if (token != null) {
-        await _saveToken(token);
-        // Thành công ép buộc đăng nhập
-        return LoginResult(token: token, role: role, statusCode: 200); 
-      }
-      return LoginResult(errorMessage: 'Ép buộc đăng nhập thành công nhưng thiếu token.', statusCode: 200);
-    } else {
-      // Thất bại khi force login (ví dụ: sai mật khẩu trong quá trình nhập lại, hoặc lỗi server)
-      final errorMessage = data['message'] ?? 'Lỗi khi ép buộc đăng nhập.';
-      return LoginResult(errorMessage: errorMessage, statusCode: response.statusCode);
-    }
-  } catch (e) {
-    print('Lỗi kết nối khi force login: $e');
-    return LoginResult(errorMessage: 'Không thể kết nối đến máy chủ.', statusCode: 503);
-  }
-}
-
-  // Hàm đọc Role đã lưu (MỚI)
-  Future<String?> getUserRole() async {
-    return await storage.read(key: 'user_role');
-  }
-
-   // === 2.4. Đăng xuất (Logout) ===
-
-  Future<void> logout() async {
-    // Xóa token khỏi bộ nhớ an toàn
-    await _storage.delete(key: _tokenKey);
-  }
-
-  // === 2.5. Lấy Profile (Fetch Profile - Mã đã có) ===
-
-  // Tải thông tin Profile từ Backend (Được bảo vệ bằng Token)
-  Future<UserProfile?> fetchUserProfile() async {
-  final token = await getToken();
-  if (token == null) {
-    print('DEBUG: Không tìm thấy Token. Chưa đăng nhập hoặc Token đã bị xóa.');
-    return null;
-  }
-
+  // ===== LOGIN =====
+  Future<LoginResult> login(String identifier, String password) async {
     try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/profile'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $token', // Gửi token để xác thực
-        },
+      String email = identifier;
+
+      // 1. Kiểm tra nếu identifier không phải email, tìm email từ username trong Firestore
+      if (!identifier.contains('@')) {
+        final query = await _db
+            .collection('users')
+            .where('username', isEqualTo: identifier.toLowerCase())
+            .limit(1)
+            .get();
+
+        if (query.docs.isEmpty) {
+          return LoginResult(errorMessage: "Username không tồn tại", statusCode: 404);
+        }
+        email = query.docs.first.get('email');
+      }
+
+      // 2. Đăng nhập bằng Email tìm được
+      final result = await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
       );
 
-     if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        print('DEBUG: Profile tải thành công. Data: $data');
-        return UserProfile.fromJson(data); 
-      } 
-      // ⭐️ BẮT 401 UNAUTHORIZED ⭐️
-    else if (response.statusCode == 401) {
-      final data = json.decode(response.body);
-      final message = data['message'] ?? '';
-      
-      // So sánh với thông báo lỗi từ verifyToken của Backend
-      if (message.contains('Phiên đăng nhập đã hết hạn hoặc bị đăng nhập từ thiết bị khác')) {
-          // Xóa token cũ ngay lập tức
-          await logout(); 
-          
-          // Ném Custom Exception để UI bắt và hiển thị Dialog
-          throw SessionInvalidatedException(message); 
-      }
-      
-      // Xử lý các lỗi 401 khác (ví dụ: Token hết hạn thông thường)
-      await logout();
-      return null; 
-    }
-    
-    return null; // Xử lý các lỗi khác (500, etc.)
-  } on SessionInvalidatedException catch (e) {
-      // Re-throw để hàm gọi nó có thể bắt
-      rethrow; 
-  } catch (e) {
-    print('Lỗi lấy thông tin Profile: $e');
-    return null;
-  }
-    
-  }
+      // 3. Cập nhật Device ID như cũ
+      final deviceId = await getUniqueDeviceId();
+      await _db.collection('users').doc(result.user!.uid).update({
+        'lastDeviceId': deviceId,
+        'lastLogin': FieldValue.serverTimestamp(),
+      });
 
-  // === 2.6. updateUserProfile 
-  Future<bool> updateUserProfile(UserProfile updatedProfile) async {
-    final token = await getToken();
-    if (token == null) return false;
-
-    try {
-        final response = await http.patch( // Hoặc PUT, tùy thuộc vào Backend
-            Uri.parse('$_baseUrl/profile/update'), // Endpoint API Backend
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer $token',
-            },
-            body: json.encode({
-                // Chỉ gửi các trường cần cập nhật
-                'fullName': updatedProfile.fullName,
-                'email': updatedProfile.email,
-                'phone': updatedProfile.phone,
-            }),
-        );
-
-        if (response.statusCode == 200) {
-            return true;
-        } else {
-            print('Lỗi cập nhật Profile: ${response.body}');
-            return false;
-        }
+      return LoginResult(
+        token: await result.user!.getIdToken(),
+        statusCode: 200,
+      );
     } catch (e) {
-        print('Lỗi mạng khi cập nhật profile: $e');
-        return false;
+      return LoginResult(errorMessage: e.toString(), statusCode: 500);
     }
-}
+  }
   
+  // ===== GỬI OTP QUA CLOUD FUNCTION =====
+ // 1. Gửi Link xác thực Gmail (Native Firebase)
+Future<bool> sendEmailVerification() async {
+  try {
+    final user = _auth.currentUser;
+    if (user != null) {
+      await user.sendEmailVerification();
+      debugPrint('🔗 Link xác thực đã gửi. Kiểm tra Emulator UI (Tab Auth)');
+      return true;
+    }
+    return false;
+  } catch (e) {
+    debugPrint('❌ Lỗi gửi link email: $e');
+    return false;
+  }
+}
+
+// 2. Gửi OTP cho Số điện thoại (Native Firebase)
+Future<void> verifyPhoneNumber(
+  String phoneNumber, {
+  required Function(String) onCodeSent,
+  required Function(String) onError,
+}) async {
+  // Tự động chuyển 09xxx thành +849xxx để tránh lỗi E.164
+  String formattedPhone = phoneNumber;
+  if (phoneNumber.startsWith('0')) {
+    formattedPhone = '+84${phoneNumber.substring(1)}';
+  } else if (!phoneNumber.startsWith('+')) {
+    formattedPhone = '+$phoneNumber';
+  }
+
+  await _auth.verifyPhoneNumber(
+    phoneNumber: formattedPhone,
+    verificationCompleted: (PhoneAuthCredential credential) async {
+      await _auth.currentUser?.linkWithCredential(credential);
+    },
+    verificationFailed: (FirebaseAuthException e) {
+      // Đây chính là nơi bắt lỗi định dạng bạn đang gặp
+      onError(e.message ?? 'Lỗi xác thực');
+    },
+    codeSent: (String verificationId, int? resendToken) {
+      onCodeSent(verificationId);
+      // SAU KHI DÒNG NÀY CHẠY: Hãy nhìn vào Tab LOGS trên trình duyệt của bạn
+      debugPrint('📟 Đã gửi yêu cầu. Kiểm tra mã OTP tại Tab Logs của Emulator UI');
+    },
+    codeAutoRetrievalTimeout: (String verificationId) {},
+  );
+}
+
+  // Hàm xác nhận mã sau khi bạn lấy mã từ Logs
+  Future<bool> confirmPhoneOtp(String verificationId, String smsCode) async {
+    try {
+      AuthCredential credential = PhoneAuthProvider.credential(
+        verificationId: verificationId,
+        smsCode: smsCode,
+      );
+      await _auth.currentUser?.linkWithCredential(credential);
+
+      // QUAN TRỌNG: Cập nhật đúng field 'isPhoneVerified'
+      await _db.collection('users').doc(_auth.currentUser!.uid).update({
+        'isPhoneVerified': true, 
+        'phone': _auth.currentUser!.phoneNumber,
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+  // ===== XÁC THỰC OTP =====
+  Future<bool> verifyOtp(String email, String otpCode) async {
+    try {
+      final result = await _functions.httpsCallable('verifyOtpCode').call({
+        'email': email,
+        'otp': otpCode,
+      });
+
+      if (result.data['success'] == true) {
+        // Sau khi Cloud Function xác nhận OTP đúng, ta cập nhật Firestore
+        final user = _auth.currentUser;
+        if (user != null) {
+          await _db.collection('users').doc(user.uid).update({
+            'isVerified': true,
+          });
+        }
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Lỗi xác thực OTP: $e');
+      return false;
+    }
+  }
+
+  // ===== DEVICE ID (AN TOÀN WEB) =====
+  Future<String> getUniqueDeviceId() async {
+    final deviceInfo = DeviceInfoPlugin();
+
+    if (kIsWeb) {
+      final web = await deviceInfo.webBrowserInfo;
+      return 'web_${web.browserName}_${web.userAgent.hashCode}';
+    }
+
+    final android = await deviceInfo.androidInfo;
+    return '${android.id}_${android.model}_${android.device}';
+  }
+
+  // ===== CHECK DEVICE =====
+  Future<bool> isCurrentDeviceValid() async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+
+    final currentId = await getUniqueDeviceId();
+    final doc = await _db.collection('users').doc(user.uid).get();
+
+    return doc.exists &&
+        (doc.data() as Map<String, dynamic>)['lastDeviceId'] == currentId;
+  }
+
+  // ===== PROFILE =====
+  Future<UserProfile?> fetchUserProfile() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    final doc = await _db.collection('users').doc(user.uid).get();
+    return doc.exists ? UserProfile.fromFirestore(doc) : null;
+  }
+
+  Future<void> logout() => _auth.signOut();
+
+  Future<void> updateEmailVerificationStatus(bool status) async {
+  final user = _auth.currentUser;
+    if (user != null) {
+      await _db.collection('users').doc(user.uid).update({
+        'isVerified': status,
+      });
+    }
+  }
+
+  Stream<DocumentSnapshot> userStream() {
+    final user = _auth.currentUser;
+    if (user == null) return const Stream.empty();
+    // Sử dụng .snapshots() để nhận dữ liệu ngay lập tức và liên tục
+    return _db.collection('users').doc(user.uid).snapshots();
+  }
+  Future<String?> getToken() async {
+  return await _auth.currentUser?.getIdToken();
+  }
+  Future<bool> updateUserProfile(UserProfile profile) async {
+    try {
+      await _db.collection('users').doc(profile.uid).update({
+        'fullName': profile.fullName,
+        'email': profile.email,
+        'phone': profile.phone,
+      });
+      return true;
+    } catch (e) {
+      debugPrint('Update profile error: $e');
+      return false;
+    }
+  }
+
+  String formatEmulatorUrl(String? url) {
+  if (url == null) return "";
+  
+  // Nếu không phải là Emulator (production) thì giữ nguyên
+  if (!url.contains('localhost') && !url.contains('10.0.2.2')) return url;
+
+  if (kIsWeb) {
+    // Nếu chạy Web, đổi 10.0.2.2 thành localhost
+    return url.replaceAll('10.0.2.2', 'localhost');
+  } else if (Platform.isAndroid) {
+    // Nếu chạy Android, đổi localhost thành 10.0.2.2
+    return url.replaceAll('localhost', '10.0.2.2');
+  }
+  
+  return url;
+}
+
+  // Update user avatar
+  Future<String?> uploadAvatar({File? imageFile, Uint8List? webImage}) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return null;
+
+      // Đường dẫn lưu trữ: avatars/uid.jpg
+      final storageRef = _storage.ref().child('avatars').child('${user.uid}.jpg');
+
+      // Tải lên dựa trên nền tảng (Web dùng putData, Mobile dùng putFile)
+      if (kIsWeb && webImage != null) {
+        await storageRef.putData(webImage);
+      } else if (imageFile != null) {
+        await storageRef.putFile(imageFile);
+      } else {
+        return null;
+      }
+
+      // Lấy URL sau khi upload thành công
+      String downloadURL = await storageRef.getDownloadURL();
+
+      // Cập nhật URL vào Firestore của user
+      await _db.collection('users').doc(user.uid).update({
+        'avatarUrl': formatEmulatorUrl(downloadURL),
+      });
+
+      return downloadURL;
+    } catch (e) {
+      debugPrint('Lỗi upload thực tế: $e');
+      return null;
+    }
+  }
 }
