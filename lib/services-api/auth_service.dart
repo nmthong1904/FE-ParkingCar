@@ -3,15 +3,18 @@ import 'dart:io';
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart'; // Để dùng kDebugMode
+import 'package:firebase_storage/firebase_storage.dart';
+import 'package:flutter/foundation.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 
-// --- 1. MODEL DỮ LIỆU ---
+// ===== MODEL =====
 class UserProfile {
   final String uid;
   final String username;
   final String fullName;
   final String email;
   final String phone;
+  final String? avatarUrl;
 
   UserProfile({
     required this.uid,
@@ -19,30 +22,41 @@ class UserProfile {
     required this.fullName,
     required this.email,
     required this.phone,
+    this.avatarUrl,
   });
 
-  factory UserProfile.fromFirestore(DocumentSnapshot doc) {
-    Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+  // BỔ SUNG HÀM NÀY ĐỂ FIX LỖI KHI CẬP NHẬT ẢNH
+  UserProfile copyWith({
+    String? avatarUrl,
+    String? fullName,
+    String? phone,
+  }) {
     return UserProfile(
-      uid: doc.id,
-      username: data['username'] ?? '',
-      fullName: data['fullName'] ?? '',
-      email: data['email'] ?? '',
-      phone: data['phone'] ?? '',
+      uid: this.uid,
+      username: this.username,
+      fullName: fullName ?? this.fullName,
+      email: this.email,
+      phone: phone ?? this.phone,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
     );
   }
 
-  Map<String, dynamic> toMap() {
-    return {
-      'username': username,
-      'fullName': fullName,
-      'email': email,
-      'phone': phone,
-    };
-  }
+ factory UserProfile.fromFirestore(DocumentSnapshot doc) {
+  // Thêm kiểm tra dữ liệu tồn tại
+  final data = doc.data() as Map<String, dynamic>? ?? {}; 
+  
+  return UserProfile(
+    uid: doc.id,
+    username: data['username'] ?? "",
+    fullName: data['fullName'] ?? "New User",
+    email: data['email'] ?? "",
+    phone: data['phone'] ?? "",
+    // Quan trọng: avatarUrl phải cho phép null để không lỗi khi chưa có ảnh
+    avatarUrl: data['avatarUrl'], 
+  );
+}
 }
 
-// Kết quả đăng nhập tương đương với cấu trúc cũ của bạn
 class LoginResult {
   final String? token;
   final String? errorMessage;
@@ -51,107 +65,250 @@ class LoginResult {
   LoginResult({this.token, this.errorMessage, this.statusCode});
 }
 
+late FirebaseFunctions _functions;
+
+// ===== SERVICE =====
 class AuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseStorage _storage = FirebaseStorage.instance;
 
   AuthService() {
-    // === 2. CẤU HÌNH FIREBASE EMULATOR ===
-    // Tự động trỏ về Emulator nếu đang chạy ở mode Debug
-    if (kDebugMode) {
-      String host = "10.0.2.2"; // Mặc định cho Android Emulator
-      // Nếu bạn dùng máy ảo iOS hoặc Web, có thể đổi thành 'localhost'
-      
-      try {
-        _auth.useAuthEmulator(host, 9099);
-        _db.useFirestoreEmulator(host, 8080);
-        print("DEBUG: Đã kết nối tới Firebase Emulator ($host)");
-      } catch (e) {
-        print("DEBUG: Emulator đã được cấu hình trước đó.");
-      }
-    }
-  }
+  if (kDebugMode) {
+    final host = kIsWeb ? 'localhost' : '10.0.2.2';
 
-  // Lấy Token (Firebase quản lý tự động, nhưng vẫn trả về nếu bạn cần)
-  Future<String?> getToken() async {
-    return await _auth.currentUser?.getIdToken();
-  }
+    _functions = FirebaseFunctions.instanceFor(
+      region: 'us-central1',
+    );
+    _functions.useFunctionsEmulator(host, 5001);
 
-  // === 3. ĐĂNG KÝ (Sử dụng Firebase Auth + Firestore) ===
-  Future<bool> register(String username, String password, String email, String phone) async {
+    _auth.useAuthEmulator(host, 9099);
+    _db.useFirestoreEmulator(host, 8080);
+
+    debugPrint('🔥 Firebase Emulator connected ($host)');
+  } else {
+    _functions = FirebaseFunctions.instanceFor(
+      region: 'us-central1',
+    );
+  }
+}
+
+  // ===== REGISTER =====
+  Future<bool> register(
+      String username, String password, String email, String phone) async {
     try {
-      // 1. Tạo tài khoản trong Firebase Auth
-      UserCredential result = await _auth.createUserWithEmailAndPassword(
+      final result = await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      // 2. Lưu thông tin bổ sung vào Firestore (Thay cho PostgreSQL)
-      if (result.user != null) {
-        await _db.collection('users').doc(result.user!.uid).set({
-          'username': username,
-          'email': email,
-          'phone': phone,
-          'fullName': 'New User',
-          'createdAt': FieldValue.serverTimestamp(),
-        });
-      }
+      // Gửi email xác nhận ngay khi đăng ký
+      // await result.user!.sendEmailVerification();
+
+      await _db.collection('users').doc(result.user!.uid).set({
+        'username': username.toLowerCase(),
+        'email': email,
+        'phone': phone,
+        'fullName': 'New User',
+        'createdAt': FieldValue.serverTimestamp(),
+        'isVerified': false, 
+      });
+
       return true;
     } catch (e) {
-      print('Lỗi Đăng ký Firebase: $e');
+      debugPrint('Register error: $e');
       return false;
     }
   }
 
-
-  // Biến cờ để bỏ qua kiểm tra ngay sau khi đăng nhập
-  bool isInitializingSession = false;  
-  // === 4. ĐĂNG NHẬP ===
-  Future<LoginResult> login(String email, String password) async {
+  // ===== LOGIN =====
+  Future<LoginResult> login(String identifier, String password) async {
     try {
-      UserCredential result = await _auth.signInWithEmailAndPassword(
+      String email = identifier;
+
+      // 1. Kiểm tra nếu identifier không phải email, tìm email từ username trong Firestore
+      if (!identifier.contains('@')) {
+        final query = await _db
+            .collection('users')
+            .where('username', isEqualTo: identifier.toLowerCase())
+            .limit(1)
+            .get();
+
+        if (query.docs.isEmpty) {
+          return LoginResult(errorMessage: "Username không tồn tại", statusCode: 404);
+        }
+        email = query.docs.first.get('email');
+      }
+
+      // 2. Đăng nhập bằng Email tìm được
+      final result = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
-      
-     if (result.user != null) {
-        // Đánh dấu đây là phiên vừa đăng nhập để tránh "tự đá mình"
-        isInitializingSession = true; 
 
-        // SỬ DỤNG CHUNG HÀM getUniqueDeviceId
-        String deviceId = await getUniqueDeviceId();
-        
-        await _db.collection('users').doc(result.user!.uid).update({
-          'lastDeviceId': deviceId,
-          'lastLogin': FieldValue.serverTimestamp(),
-        });
-        
-        return LoginResult(token: await result.user?.getIdToken(), statusCode: 200);
-      }
-      return LoginResult(errorMessage: "Lỗi đăng nhập", statusCode: 401);
+      // 3. Cập nhật Device ID như cũ
+      final deviceId = await getUniqueDeviceId();
+      await _db.collection('users').doc(result.user!.uid).update({
+        'lastDeviceId': deviceId,
+        'lastLogin': FieldValue.serverTimestamp(),
+      });
+
+      return LoginResult(
+        token: await result.user!.getIdToken(),
+        statusCode: 200,
+      );
     } catch (e) {
       return LoginResult(errorMessage: e.toString(), statusCode: 500);
     }
   }
+  
+  // ===== GỬI OTP QUA CLOUD FUNCTION =====
+ // 1. Gửi Link xác thực Gmail (Native Firebase)
+Future<bool> sendEmailVerification() async {
+  try {
+    final user = _auth.currentUser;
+    if (user != null) {
+      await user.sendEmailVerification();
+      debugPrint('🔗 Link xác thực đã gửi. Kiểm tra Emulator UI (Tab Auth)');
+      return true;
+    }
+    return false;
+  } catch (e) {
+    debugPrint('❌ Lỗi gửi link email: $e');
+    return false;
+  }
+}
 
-  // === 5. LẤY PROFILE (TỪ FIRESTORE) ===
-  Future<UserProfile?> fetchUserProfile() async {
-    User? user = _auth.currentUser;
-    if (user == null) return null;
+// 2. Gửi OTP cho Số điện thoại (Native Firebase)
+Future<void> verifyPhoneNumber(
+  String phoneNumber, {
+  required Function(String) onCodeSent,
+  required Function(String) onError,
+}) async {
+  // Tự động chuyển 09xxx thành +849xxx để tránh lỗi E.164
+  String formattedPhone = phoneNumber;
+  if (phoneNumber.startsWith('0')) {
+    formattedPhone = '+84${phoneNumber.substring(1)}';
+  } else if (!phoneNumber.startsWith('+')) {
+    formattedPhone = '+$phoneNumber';
+  }
 
+  await _auth.verifyPhoneNumber(
+    phoneNumber: formattedPhone,
+    verificationCompleted: (PhoneAuthCredential credential) async {
+      await _auth.currentUser?.linkWithCredential(credential);
+    },
+    verificationFailed: (FirebaseAuthException e) {
+      // Đây chính là nơi bắt lỗi định dạng bạn đang gặp
+      onError(e.message ?? 'Lỗi xác thực');
+    },
+    codeSent: (String verificationId, int? resendToken) {
+      onCodeSent(verificationId);
+      // SAU KHI DÒNG NÀY CHẠY: Hãy nhìn vào Tab LOGS trên trình duyệt của bạn
+      debugPrint('📟 Đã gửi yêu cầu. Kiểm tra mã OTP tại Tab Logs của Emulator UI');
+    },
+    codeAutoRetrievalTimeout: (String verificationId) {},
+  );
+}
+
+  // Hàm xác nhận mã sau khi bạn lấy mã từ Logs
+  Future<bool> confirmPhoneOtp(String verificationId, String smsCode) async {
     try {
-      DocumentSnapshot doc = await _db.collection('users').doc(user.uid).get();
-      if (doc.exists) {
-        return UserProfile.fromFirestore(doc);
-      }
-      return null;
+      AuthCredential credential = PhoneAuthProvider.credential(
+        verificationId: verificationId,
+        smsCode: smsCode,
+      );
+      await _auth.currentUser?.linkWithCredential(credential);
+
+      // QUAN TRỌNG: Cập nhật đúng field 'isPhoneVerified'
+      await _db.collection('users').doc(_auth.currentUser!.uid).update({
+        'isPhoneVerified': true, 
+        'phone': _auth.currentUser!.phoneNumber,
+      });
+      return true;
     } catch (e) {
-      print('Lỗi lấy Profile Firestore: $e');
-      return null;
+      return false;
+    }
+  }
+  // ===== XÁC THỰC OTP =====
+  Future<bool> verifyOtp(String email, String otpCode) async {
+    try {
+      final result = await _functions.httpsCallable('verifyOtpCode').call({
+        'email': email,
+        'otp': otpCode,
+      });
+
+      if (result.data['success'] == true) {
+        // Sau khi Cloud Function xác nhận OTP đúng, ta cập nhật Firestore
+        final user = _auth.currentUser;
+        if (user != null) {
+          await _db.collection('users').doc(user.uid).update({
+            'isVerified': true,
+          });
+        }
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Lỗi xác thực OTP: $e');
+      return false;
     }
   }
 
-  // === 6. CẬP NHẬT PROFILE ===
+  // ===== DEVICE ID (AN TOÀN WEB) =====
+  Future<String> getUniqueDeviceId() async {
+    final deviceInfo = DeviceInfoPlugin();
+
+    if (kIsWeb) {
+      final web = await deviceInfo.webBrowserInfo;
+      return 'web_${web.browserName}_${web.userAgent.hashCode}';
+    }
+
+    final android = await deviceInfo.androidInfo;
+    return '${android.id}_${android.model}_${android.device}';
+  }
+
+  // ===== CHECK DEVICE =====
+  Future<bool> isCurrentDeviceValid() async {
+    final user = _auth.currentUser;
+    if (user == null) return false;
+
+    final currentId = await getUniqueDeviceId();
+    final doc = await _db.collection('users').doc(user.uid).get();
+
+    return doc.exists &&
+        (doc.data() as Map<String, dynamic>)['lastDeviceId'] == currentId;
+  }
+
+  // ===== PROFILE =====
+  Future<UserProfile?> fetchUserProfile() async {
+    final user = _auth.currentUser;
+    if (user == null) return null;
+
+    final doc = await _db.collection('users').doc(user.uid).get();
+    return doc.exists ? UserProfile.fromFirestore(doc) : null;
+  }
+
+  Future<void> logout() => _auth.signOut();
+
+  Future<void> updateEmailVerificationStatus(bool status) async {
+  final user = _auth.currentUser;
+    if (user != null) {
+      await _db.collection('users').doc(user.uid).update({
+        'isVerified': status,
+      });
+    }
+  }
+
+  Stream<DocumentSnapshot> userStream() {
+    final user = _auth.currentUser;
+    if (user == null) return const Stream.empty();
+    // Sử dụng .snapshots() để nhận dữ liệu ngay lập tức và liên tục
+    return _db.collection('users').doc(user.uid).snapshots();
+  }
+  Future<String?> getToken() async {
+  return await _auth.currentUser?.getIdToken();
+  }
   Future<bool> updateUserProfile(UserProfile profile) async {
     try {
       await _db.collection('users').doc(profile.uid).update({
@@ -161,71 +318,58 @@ class AuthService {
       });
       return true;
     } catch (e) {
-      print('Lỗi cập nhật Profile Firestore: $e');
+      debugPrint('Update profile error: $e');
       return false;
     }
   }
 
-  // === 7. ĐĂNG XUẤT ===
-  Future<void> logout() async {
-    await _auth.signOut();
-  }
-//   // Hàm bổ trợ để lấy ID duy nhất của thiết bị
-//   Future<String> _getDeviceId() async {
-//   if (kDebugMode) {
-//     // Trong mode Debug, bạn có thể cộng thêm tên model để phân biệt các máy ảo
-//     final deviceInfo = DeviceInfoPlugin();
-//     if (Platform.isAndroid) {
-//       final info = await deviceInfo.androidInfo;
-//       return "${info.id}_${info.model}_${info.device}"; // Kết hợp ID + Model (ví dụ: QM1A_Pixel_7)
-//     }
-//   }
+  String formatEmulatorUrl(String? url) {
+  if (url == null) return "";
   
-//   // Logic thực tế cho Production
-//   final deviceInfo = DeviceInfoPlugin();
-//   if (Platform.isAndroid) {
-//     final androidInfo = await deviceInfo.androidInfo;
-//     return androidInfo.id; 
-//   } else if (Platform.isIOS) {
-//     final iosInfo = await deviceInfo.iosInfo;
-//     return iosInfo.identifierForVendor ?? "unknown_ios";
-//   }
-//   return "unknown_device";
-// }
+  // Nếu không phải là Emulator (production) thì giữ nguyên
+  if (!url.contains('localhost') && !url.contains('10.0.2.2')) return url;
 
-  // HÀM KIỂM TRA THIẾT BỊ HỢP LỆ (Quan trọng)
-  Future<bool> isCurrentDeviceValid() async {
-    User? user = _auth.currentUser;
-    if (user == null) return false;
-
-    String currentId = await getUniqueDeviceId();
-    DocumentSnapshot doc = await _db.collection('users').doc(user.uid).get();
-    
-    if (doc.exists) {
-      String? savedId = (doc.data() as Map<String, dynamic>)['lastDeviceId'];
-      return savedId == currentId;
-    }
-    return false;
+  if (kIsWeb) {
+    // Nếu chạy Web, đổi 10.0.2.2 thành localhost
+    return url.replaceAll('10.0.2.2', 'localhost');
+  } else if (Platform.isAndroid) {
+    // Nếu chạy Android, đổi localhost thành 10.0.2.2
+    return url.replaceAll('localhost', '10.0.2.2');
   }
- // HÀM DUY NHẤT ĐỂ LẤY ID - Dùng cho cả Login và Kiểm tra
-  Future<String> getUniqueDeviceId() async {
-    final deviceInfo = DeviceInfoPlugin();
-    if (kIsWeb) return "web_browser";
+  
+  return url;
+}
 
-    if (Platform.isAndroid) {
-      final info = await deviceInfo.androidInfo;
-      // Kết hợp các trường này để đảm bảo Pixel 4 và Pixel 7 khác ID nhau trên Emulator
-      return "${info.id}_${info.model}_${info.device}"; 
-    } else if (Platform.isIOS) {
-      final info = await deviceInfo.iosInfo;
-      return info.identifierForVendor ?? "unknown_ios";
+  // Update user avatar
+  Future<String?> uploadAvatar({File? imageFile, Uint8List? webImage}) async {
+    try {
+      final user = _auth.currentUser;
+      if (user == null) return null;
+
+      // Đường dẫn lưu trữ: avatars/uid.jpg
+      final storageRef = _storage.ref().child('avatars').child('${user.uid}.jpg');
+
+      // Tải lên dựa trên nền tảng (Web dùng putData, Mobile dùng putFile)
+      if (kIsWeb && webImage != null) {
+        await storageRef.putData(webImage);
+      } else if (imageFile != null) {
+        await storageRef.putFile(imageFile);
+      } else {
+        return null;
+      }
+
+      // Lấy URL sau khi upload thành công
+      String downloadURL = await storageRef.getDownloadURL();
+
+      // Cập nhật URL vào Firestore của user
+      await _db.collection('users').doc(user.uid).update({
+        'avatarUrl': formatEmulatorUrl(downloadURL),
+      });
+
+      return downloadURL;
+    } catch (e) {
+      debugPrint('Lỗi upload thực tế: $e');
+      return null;
     }
-    return "unknown_device";
-  }
-
-  // Stream để các màn hình lắng nghe
-  Stream<DocumentSnapshot> userStream() {
-    String uid = _auth.currentUser?.uid ?? '';
-    return _db.collection('users').doc(uid).snapshots();
   }
 }

@@ -42,8 +42,9 @@
       ]
     }
   ],
-  "storage": {
-    "rules": "storage.rules"
+ "storage": {
+  "rules": "storage.rules",
+  "cors": "storage_cors.json"
   },
   "emulators": {
     "auth": {
@@ -56,7 +57,7 @@
     },
     "firestore": {
       "host": "0.0.0.0",
-      "firestore": { "port": 8081 }
+      "firestore": { "port": 8080 }
     },
     "storage": {
       "host": "0.0.0.0",

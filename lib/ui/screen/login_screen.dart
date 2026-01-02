@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:parkingcar/services-api/auth_service.dart';
 import 'package:parkingcar/ui/screen/register_screen.dart';
 import 'main_screen.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -24,8 +25,13 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _onLoginSuccess() {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('✅ Đăng nhập thành công!'), backgroundColor: Colors.green)
+    Fluttertoast.showToast(
+      msg: "✅ Đăng nhập thành công!",
+      toastLength: Toast.LENGTH_SHORT,
+      gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+      backgroundColor: Colors.green,
+      textColor: Colors.white,
+      fontSize: 16.0,
     );
     Navigator.pushReplacement(
       context,
@@ -76,8 +82,13 @@ class _LoginScreenState extends State<LoginScreen> {
     } else if (result.statusCode == 409) {
       _showSessionConflictDialog(email, password);
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('❌ Lỗi: ${result.errorMessage ?? 'Sai tài khoản hoặc mật khẩu'}'), backgroundColor: Colors.red)
+        Fluttertoast.showToast(
+        msg: "'❌ Lỗi: ${result.errorMessage ?? 'Sai tài khoản hoặc mật khẩu'}",
+        toastLength: Toast.LENGTH_SHORT,
+        gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+        backgroundColor: Colors.green,
+        textColor: Colors.white,
+        fontSize: 16.0,
       );
     }
   }

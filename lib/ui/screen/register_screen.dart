@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:fluttertoast/fluttertoast.dart';
 import 'package:parkingcar/services-api/auth_service.dart';
 import 'login_screen.dart';
 
@@ -22,7 +23,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   void _handleRegister() async {
     if (_passwordController.text != _confirmPasswordController.text) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('❌ Mật khẩu không khớp'), backgroundColor: Colors.orange));
+      Fluttertoast.showToast(
+           msg: "❌ Mật khẩu không khớp",
+           toastLength: Toast.LENGTH_SHORT,
+           gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+           backgroundColor: Colors.green,
+           textColor: Colors.white,
+           fontSize: 16.0,
+      );
       return;
     }
 
@@ -39,10 +47,24 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = false);
 
     if (success) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Đăng ký thành công!'), backgroundColor: Colors.green));
+      Fluttertoast.showToast(
+           msg: "✅ Đăng ký thành công!",
+           toastLength: Toast.LENGTH_SHORT,
+           gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+           backgroundColor: Colors.green,
+           textColor: Colors.white,
+           fontSize: 16.0,
+      );
       Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const LoginScreen()));
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('❌ Đăng ký thất bại. Email có thể đã tồn tại.'), backgroundColor: Colors.red));
+      Fluttertoast.showToast(
+           msg: "❌ Đăng ký thất bại. Email có thể đã tồn tại.",
+           toastLength: Toast.LENGTH_SHORT,
+           gravity: ToastGravity.BOTTOM, // Hiển thị ở dưới nhưng không đẩy layout
+           backgroundColor: Colors.green,
+           textColor: Colors.white,
+           fontSize: 16.0,
+      );
     }
   }
 

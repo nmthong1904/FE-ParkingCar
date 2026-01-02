@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:parkingcar/services-api/auth_service.dart'; // Import AuthService
+import 'package:parkingcar/services-api/auth_service.dart';
+import 'package:parkingcar/ui/screen/addproduct_screen.dart';
 import 'package:parkingcar/ui/screen/cart_screen.dart';
 import 'package:parkingcar/ui/screen/detail_screen.dart';
 import 'package:parkingcar/ui/screen/home_screen.dart';
 import 'package:parkingcar/ui/screen/login_screen.dart';
-import 'package:parkingcar/ui/screen/profile_screen.dart'; // Import màn hình Profile mới
+import 'package:parkingcar/ui/screen/profile_screen.dart';
+
+// import 'package:parkingcar/ui/screen/add_product_screen.dart'; // Màn hình mới bạn sẽ tạo
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -14,44 +17,27 @@ class MainScreen extends StatefulWidget {
 }
 
 class _MainScreenState extends State<MainScreen> {
-  final AuthService _authService = AuthService(); // Khởi tạo AuthService
+  final AuthService _authService = AuthService();
   int _selectedIndex = 0;
 
-  // 2. Danh sách các màn hình con (các tab)
-  // Lưu ý: Tab "Tài khoản" (index 3) sẽ được định nghĩa riêng trong build()
+  // Danh sách màn hình (Bỏ màn hình Profile ra khỏi mảng cố định để xử lý qua FutureBuilder)
   final List<Widget> _screens = [
-    const HomeScreen(), // Tab 1: Trang chủ
-    const DetailScreen(), // Tab 2: Yêu thích
-    const CartScreen(), // Tab 3: Giỏ hàng
-    // Tab 4: Được thay thế bằng _buildAccountScreen() để kiểm tra trạng thái đăng nhập
+    const HomeScreen(),
+    const DetailScreen(),
+    const CartScreen(),
   ];
 
-  // 3. Hàm xử lý khi người dùng chọn tab mới
-  void _onItemTapped(int index) {
-    setState(() {
-      _selectedIndex = index;
-    });
-  }
-
-  // ✨ HÀM MỚI: Kiểm tra trạng thái đăng nhập và trả về màn hình phù hợp
   Widget _buildAccountScreen() {
-    // Sử dụng FutureBuilder để đợi kết quả kiểm tra token
-    // Mỗi khi AuthState thay đổi (Đăng nhập/Đăng xuất), MainScreen sẽ được build lại.
     return FutureBuilder<String?>(
-      future: _authService.getToken(), // Giả định AuthService có hàm getToken()
+      future: _authService.getToken(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
-          // Đang chờ kiểm tra token
           return const Center(child: CircularProgressIndicator());
         }
-
         final token = snapshot.data;
         if (token != null && token.isNotEmpty) {
-          // Đã đăng nhập: Hiển thị màn hình Profile
-          // Key được thêm để ProfileScreen có thể được re-render khi đăng xuất
-          return const ProfileScreen(key: ValueKey('ProfileScreen')); 
+          return const ProfileScreen(key: ValueKey('ProfileScreen'));
         } else {
-          // Chưa đăng nhập: Hiển thị màn hình Đăng nhập
           return const LoginScreen(key: ValueKey('LoginScreen'));
         }
       },
@@ -59,32 +45,60 @@ class _MainScreenState extends State<MainScreen> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    // Tạo danh sách màn hình hoàn chỉnh, bao gồm màn hình Tài khoản có điều kiện
-    final allScreens = [..._screens, _buildAccountScreen()]; 
+Widget build(BuildContext context) {
+  Widget currentScreen = _selectedIndex == 3 ? _buildAccountScreen() : _screens[_selectedIndex];
 
-    return Scaffold(
-      // 4. Hiển thị màn hình con tương ứng với index đang chọn
-      body: IndexedStack(index: _selectedIndex, children: allScreens),
+  return Scaffold(
+    resizeToAvoidBottomInset: false, // Quan trọng: Tránh đẩy FAB khi có keyboard
+    extendBody: true, // Quan trọng: Giúp FAB và BottomAppBar khớp nhau hơn
+    body: currentScreen,
 
-      // 5. Bottom Navigation Bar
-      bottomNavigationBar: BottomNavigationBar(
-        items: const <BottomNavigationBarItem>[
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Trang chủ'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.favorite),
-            label: 'Yêu thích',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.shopping_cart),
-            label: 'Giỏ hàng',
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: 'Tài khoản'),
+    floatingActionButtonLocation: FloatingActionButtonLocation.centerDocked,
+    
+    floatingActionButton: FloatingActionButton(
+      onPressed: () => Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const AddproductSreen())),
+      backgroundColor: Colors.blue,
+      shape: const CircleBorder(), // Đảm bảo nút luôn tròn
+      child: const Icon(Icons.add, size: 28, color: Colors.white),
+    ),
+
+    bottomNavigationBar: BottomAppBar(
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      height: 65,
+      shape: const CircularNotchedRectangle(), // Tạo khe hở nhẹ cho FAB nếu muốn đẹp hơn
+      notchMargin: 8.0,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildTabItem(index: 0, icon: Icons.home, label: 'Trang chủ'),
+          _buildTabItem(index: 1, icon: Icons.favorite, label: 'Yêu thích'),
+          const SizedBox(width: 40), // Khoảng trống cho FAB
+          _buildTabItem(index: 2, icon: Icons.shopping_cart, label: 'Giỏ hàng'),
+          _buildTabItem(index: 3, icon: Icons.person, label: 'Tài khoản'),
         ],
-        currentIndex: _selectedIndex, // Đánh dấu tab đang hoạt động
-        selectedItemColor: Colors.blue, // Thay thế bằng AppColors.primary
-        unselectedItemColor: Colors.grey,
-        onTap: _onItemTapped, // Gọi hàm khi tab được nhấn
+      ),
+    ),
+  );
+}
+
+  // Widget con để tạo từng nút Tab
+  Widget _buildTabItem({required int index, required IconData icon, required String label}) {
+    bool isSelected = _selectedIndex == index;
+    return InkWell(
+      onTap: () => setState(() => _selectedIndex = index),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, color: isSelected ? Colors.blue : Colors.grey),
+          Text(
+            label,
+            style: TextStyle(
+              color: isSelected ? Colors.blue : Colors.grey,
+              fontSize: 12,
+            ),
+          ),
+        ],
       ),
     );
   }
